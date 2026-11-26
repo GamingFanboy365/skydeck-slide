@@ -443,40 +443,53 @@ SoundInit::
 
 ; Sound effects play on channel 1 (and 4 for the goal) and lock that channel
 ; against the music for a few frames.
-SfxHit::
+SfxHit::                        ; your paddle: a sharp thwack
     ld a, [wSilent]
     and a
     ret nz
-    ld a, 10
+    ld a, 9
     ld [wSfxLock1], a
-    xor a
+    ld a, 5
+    ld [wSfxLock4], a
+    ld a, $2B                   ; quick downward sweep
     ldh [rNR10], a
     ld a, $80
     ldh [rNR11], a
-    ld a, $F2
+    ld a, $F1
     ldh [rNR12], a
-    ld a, $A0
+    ld a, $C0
     ldh [rNR13], a
     ld a, $87
     ldh [rNR14], a
-    ret
+    jr Click
 
-SfxOppHit::
+SfxOppHit::                     ; their paddle: a lower thwack
     ld a, [wSilent]
     and a
     ret nz
-    ld a, 10
+    ld a, 9
     ld [wSfxLock1], a
-    xor a
+    ld a, 5
+    ld [wSfxLock4], a
+    ld a, $2B
     ldh [rNR10], a
     ld a, $80
     ldh [rNR11], a
-    ld a, $D2
+    ld a, $D1
     ldh [rNR12], a
-    ld a, $20
+    ld a, $40
     ldh [rNR13], a
-    ld a, $87
+    ld a, $86
     ldh [rNR14], a
+Click:                          ; a short noise tick on top
+    xor a
+    ldh [rNR41], a
+    ld a, $A1
+    ldh [rNR42], a
+    ld a, $21
+    ldh [rNR43], a
+    ld a, $80
+    ldh [rNR44], a
     ret
 
 SfxWall::
@@ -497,29 +510,33 @@ SfxWall::
     ldh [rNR14], a
     ret
 
-SfxGoal::
-    ld a, 40
-    ld [wSfxLock1], a
+SfxPlayerGoal::                 ; you scored: a bright rising cheer and a sparkle
+    ld a, 30
     ld [wSfxLock4], a
     xor a
     ldh [rNR41], a
-    ld a, $F5
+    ld a, $A3
     ldh [rNR42], a
-    ld a, $64
+    ld a, $11
     ldh [rNR43], a
     ld a, $80
     ldh [rNR44], a
-    ld a, $16
-    ldh [rNR10], a
-    ld a, $80
-    ldh [rNR11], a
+    ld hl, SfxCheerSeq
+    jp PlaySfxSeq
+
+SfxOppGoal::                    ; they scored: a sagging groan over a low thud
+    ld a, 30
+    ld [wSfxLock4], a
+    xor a
+    ldh [rNR41], a
     ld a, $F4
-    ldh [rNR12], a
-    ld a, $00
-    ldh [rNR13], a
-    ld a, $86
-    ldh [rNR14], a
-    ret
+    ldh [rNR42], a
+    ld a, $77
+    ldh [rNR43], a
+    ld a, $80
+    ldh [rNR44], a
+    ld hl, SfxGroanSeq
+    jp PlaySfxSeq
 
 SfxBlip::
     ld a, 8

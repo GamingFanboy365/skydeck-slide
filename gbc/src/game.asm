@@ -636,6 +636,7 @@ StatePlay:
     ret
 
 PlayerScores:
+    call SfxPlayerGoal
     ld hl, wScoreP
     inc [hl]
     ld a, 1
@@ -644,6 +645,7 @@ PlayerScores:
     jr PointScored
 
 OppScores:
+    call SfxOppGoal
     ld hl, wScoreO
     inc [hl]
     xor a
@@ -652,7 +654,6 @@ OppScores:
 
 PointScored:
     call ShowMessage
-    call SfxGoal
     xor a
     ld [wPuckLive], a
     ld [wPuckVisible], a

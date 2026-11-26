@@ -166,13 +166,13 @@ OKTA = {
 # ---------------------------------------------------------------------------
 # Jingles (play once)
 # ---------------------------------------------------------------------------
-WIN = {
-    "tempo": 6, "duty1": 0x80, "env1": 0x83, "duty2": 0x80, "env2": 0xC5, "vol3": 0x20,
+WIN = {   # "Victory Lap": the fanfare after every stage won (and for the champion)
+    "tempo": 6, "duty1": 0x80, "env1": 0xA4, "duty2": 0x80, "env2": 0xD6, "vol3": 0x20,
     "loop": False,
-    "ch2": parse("C5:2 E5:2 G5:2 C6:4 r:2 G5:2 C6:16"),
-    "ch1": parse("G4:2 C5:2 E5:2 G5:4 r:2 E5:2 E5:16"),
-    "ch3": parse("C3:6 G3:4 r:2 G2:2 C3:16"),
-    "ch4": parse("K:2 H:2 H:2 S:4 r:2 S:2 K:16", drums=True),
+    "ch2": parse("G4:2 G4:2 G4:2 C5:6 r:2 G4:2 C5:2 E5:2 G5:8 E5:2 G5:2 C6:16"),
+    "ch1": parse("E4:2 E4:2 E4:2 G4:6 r:2 E4:2 G4:2 C5:2 E5:8 C5:2 E5:2 G5:16"),
+    "ch3": parse("C3:8 G2:4 C3:4 E3:8 G3:8 C3:16"),
+    "ch4": parse("K:2 K:2 K:2 S:6 r:2 K:2 K:2 K:2 S:8 S:2 S:2 K:16", drums=True),
 }
 LOSE = {
     "tempo": 8, "duty1": 0x40, "env1": 0x63, "duty2": 0x80, "env2": 0xA4, "vol3": 0x40,
@@ -181,6 +181,11 @@ LOSE = {
     "ch1": parse("C5:4 B4:4 A4:4 G#4:4 E4:16"),
     "ch3": parse("A2:8 E2:8 A2:16"),
     "ch4": parse("K:4 r:4 K:4 r:4 S:16", drums=True),
+}
+
+SFX = {
+    "SfxCheerSeq": (0x80, 0xF1, "C6:4 E6:4 G6:4 C7:12"),     # you scored
+    "SfxGroanSeq": (0x00, 0xD2, "G4:7 D#4:7 C4:18"),          # they scored
 }
 
 SONGS = [("SongTitle", TITLE), ("SongMatch", MATCH), ("SongOkta", OKTA), ("SongWin", WIN),
@@ -228,6 +233,12 @@ def generate():
             lines.append(f"{name}_{ch}:")
             for i in range(0, len(data), 16):
                 lines.append("    db " + ",".join(f"${b:02X}" for b in data[i:i + 16]))
+    for name, (duty, env, notes) in SFX.items():
+        lines.append(f"{name}::")
+        lines.append(f"    db ${duty:02X}, ${env:02X}")
+        for note, frames in parse(notes):
+            lines.append(f"    db {note - NOTE_BASE + 1}, {frames}")
+        lines.append("    db 0")
     return "\n".join(lines) + "\n"
 
 

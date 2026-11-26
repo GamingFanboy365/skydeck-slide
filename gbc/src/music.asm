@@ -112,8 +112,61 @@ LoadWave:
 BassWave:
     db $01, $34, $67, $89, $AB, $CD, $EE, $FF, $FF, $EE, $DC, $BA, $98, $76, $43, $10
 
+; hl = sound-effect sequence: db duty, envelope, then (note, frames) pairs, 0 ends.
+; Plays on channel 1 and keeps the music off that channel while it runs.
+PlaySfxSeq::
+    ld a, [hl+]
+    ld [wSfxDuty], a
+    ld a, [hl+]
+    ld [wSfxEnv], a
+    ld a, l
+    ld [wSfxPtr], a
+    ld a, h
+    ld [wSfxPtr + 1], a
+    ld a, 1
+    ld [wSfxTimer], a
+    ret
+
+SfxSeqUpdate:
+    ld a, [wSfxTimer]
+    and a
+    ret z
+    dec a
+    ld [wSfxTimer], a
+    ret nz
+    ld a, [wSfxPtr]
+    ld l, a
+    ld a, [wSfxPtr + 1]
+    ld h, a
+    ld a, [hl+]
+    and a
+    ret z                       ; sequence over (timer stays 0)
+    ld b, a
+    ld a, [hl+]
+    ld [wSfxTimer], a
+    add 2
+    ld [wSfxLock1], a
+    ld a, l
+    ld [wSfxPtr], a
+    ld a, h
+    ld [wSfxPtr + 1], a
+    call NoteFreq
+    xor a
+    ldh [rNR10], a
+    ld a, [wSfxDuty]
+    ldh [rNR11], a
+    ld a, [wSfxEnv]
+    ldh [rNR12], a
+    ld a, l
+    ldh [rNR13], a
+    ld a, h
+    or $80
+    ldh [rNR14], a
+    ret
+
 ; called once per frame
 MusicUpdate::
+    call SfxSeqUpdate
     ld hl, wSfxLock1
     ld a, [hl]
     and a
@@ -347,3 +400,7 @@ wMusVol3::  ds 1
 wMusChan::  ds 4 * 5        ; per channel: start (2), position (2), steps left (1)
 wSfxLock1:: ds 1
 wSfxLock4:: ds 1
+wSfxTimer:: ds 1
+wSfxPtr::   ds 2
+wSfxDuty::  ds 1
+wSfxEnv::   ds 1
