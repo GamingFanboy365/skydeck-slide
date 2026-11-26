@@ -331,7 +331,7 @@ MuteCurrent:
     ldh [rNR32], a
     ret
 
-SECTION "Music data", ROMX
+SECTION "Music data", ROM0
 INCLUDE "music.inc"
 
 SECTION "Music variables", WRAM0

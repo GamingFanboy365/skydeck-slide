@@ -62,15 +62,7 @@ Start:
     ld de, $8000
     ld bc, ObjTilesEnd - ObjTiles
     call Copy
-    ; opponents' sprite tiles into VRAM bank 1 at $8000
-    ld a, 1
-    ldh [rVBK], a
-    ld hl, CharTiles
-    ld de, $8000
-    ld bc, CharTilesEnd - CharTiles
-    call Copy
-    xor a
-    ldh [rVBK], a
+
     call EnterTitle
     ld a, 1
     ldh [rIE], a
@@ -226,18 +218,10 @@ LoadBgPalettes::
     jr nz, .loop
     ret
 
-; load the game screen (LCD must be off)
+; load the stage for the current opponent (LCD must be off)
 LoadGameScreen::
-    ld hl, GamePalettes
-    call LoadBgPalettes
-    ld hl, GameTiles
-    call LoadChunks
-    ld hl, GameMap
-    xor a
-    call LoadMap
-    ld hl, GameAttr
-    ld a, 1
-    call LoadMap
+    ld a, [wLevel]
+    call LoadScreen
     ; HUD row: blank text tiles, text palette
     ld hl, $9800
     ld bc, 20
@@ -254,16 +238,50 @@ LoadGameScreen::
     ret
 
 LoadTitleScreen::
-    ld hl, TitlePalettes
+    ld a, TITLE_SCREEN
+    ; fall through
+
+; a = StageTable entry: switch to its ROM bank, load palettes, tiles, map, attributes
+LoadScreen::
+    ld c, a
+    add a
+    add a
+    add a
+    add c                       ; 9 bytes per entry
+    ld hl, StageTable
+    add l
+    ld l, a
+    adc h
+    sub l
+    ld h, a
+    ld a, [hl+]
+    ld [$2000], a               ; MBC5: select the screen's ROM bank
+    ld de, wStagePtrs
+    ld c, 8
+.copy:
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec c
+    jr nz, .copy
+    ld hl, wStagePtrs
+    call .ptr
     call LoadBgPalettes
-    ld hl, TitleTiles
+    ld hl, wStagePtrs + 2
+    call .ptr
     call LoadChunks
-    ld hl, TitleMap
+    ld hl, wStagePtrs + 4
+    call .ptr
     xor a
     call LoadMap
-    ld hl, TitleAttr
+    ld hl, wStagePtrs + 6
+    call .ptr
     ld a, 1
-    call LoadMap
+    jp LoadMap
+.ptr:                           ; hl = the word stored at hl
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
     ret
 
 ; write a $FF-terminated string at hl into VRAM at de with palette b (LCD off only)
@@ -519,8 +537,9 @@ SfxBlip::
     ret
 
 ; ---------------------------------------------------------------------------
-SECTION "Assets", ROMX
+SECTION "Assets", ROM0
 INCLUDE "assets.inc"
+INCLUDE "assets_screens.inc"
 
 ; ---------------------------------------------------------------------------
 SECTION "Shadow OAM", WRAM0, ALIGN[8]
@@ -532,6 +551,7 @@ wSilent::    ds 1
 wRowDirty::  ds 1
 wRowAddr::   ds 2
 wRowBuf::    ds 20
+wStagePtrs:: ds 8
 
 SECTION "HRAM", HRAM
 hOAMDMA::      ds DmaRoutineEnd - DmaRoutine

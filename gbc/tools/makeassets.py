@@ -11,6 +11,7 @@ RGBDS include files plus PNG previews to gbc/build/assets/.
 """
 import argparse
 import os
+import textwrap
 import struct
 import sys
 import zlib
@@ -48,8 +49,10 @@ FONT = {
     "-": "00000 00000 00000 11111 00000 00000 00000", ":": "00000 01100 01100 00000 01100 01100 00000",
     "?": "01110 10001 00001 00110 00100 00000 00100", "'": "00100 00100 01000 00000 00000 00000 00000",
     "/": "00001 00010 00010 00100 01000 01000 10000", ">": "01000 00100 00010 00001 00010 00100 01000",
+    ",": "00000 00000 00000 00000 01100 00100 01000", '"': "01010 01010 10100 00000 00000 00000 00000",
+    "<": "00010 00100 01000 10000 01000 00100 00010",
 }
-FONT_ORDER = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.!-:?'/>"
+FONT_ORDER = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.!-:?'/>,\"<"
 
 
 def glyph_rows(ch):
@@ -141,7 +144,9 @@ class TileSet:
         return len(self.tiles) - 1, 0
 
 
-def build_screen(cv, palettes, first_slot):
+def build_screen(cv, palettes, first_slot, front_tiles=(), front_palette=None):
+    """front_tiles are drawn in front of sprites (BG priority) using front_palette."""
+    front = set(front_tiles)
     ts = TileSet()
     raw = []
     lossy = 0
@@ -149,18 +154,22 @@ def build_screen(cv, palettes, first_slot):
     for ty in range(18):
         for tx in range(20):
             pix = [[cv.get(tx * 8 + x, ty * 8 + y) for x in range(8)] for y in range(8)]
-            pal, idx, err = fit_tile(pix, palettes)
+            if (tx, ty) in front:
+                pal, idx, err = fit_tile(pix, [palettes[front_palette]])
+                pal = front_palette
+            else:
+                pal, idx, err = fit_tile(pix, palettes)
             lossy += err > 0
             for y in range(8):
                 for x in range(8):
                     preview[ty * 8 + y][tx * 8 + x] = palettes[pal][idx[y][x]]
             t, flip = ts.add(idx)
-            raw.append((t, flip, pal))
+            raw.append((t, flip, pal | (0x80 if (tx, ty) in front else 0)))
     tmap, amap = bytearray(), bytearray()
     for t, flip, pal in raw:
         slot = first_slot + t
         tmap.append(slot & 0xFF)
-        amap.append(pal | flip | ((1 if slot >= 256 else 0) << 3))
+        amap.append(pal | flip | ((1 if slot >= 256 else 0) << 3))   # pal may carry bit 7
     return ts.tiles, tmap, amap, preview, lossy
 
 
@@ -267,6 +276,7 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     out = []
+    banked = []                 # lines for assets_screens.inc (banked ROMX sections)
 
     def label(name):
         out.append(f"{name}::")
@@ -276,11 +286,52 @@ def main():
         for pal in pals:
             out.append("    dw " + ",".join(f"${rgb15(C[c]):04X}" for c in pal))
 
-    palettes("GamePalettes", art.GAME_PALETTES)
-    palettes("TitlePalettes", art.TITLE_PALETTES)
     label("ObjPalettes")
     for pal in art.OBJ_PALETTES:
         out.append("    dw " + ",".join(f"${rgb15(c):04X}" for c in pal))
+    label("CharPalettes")      # per opponent: OBJ palettes 3 (layer A) and 4 (layer B)
+    for pa, pb in art.CHAR_PALETTES:
+        out.append("    dw $0000," + ",".join(f"${rgb15(c):04X}" for c in pa))
+        out.append("    dw $0000," + ",".join(f"${rgb15(c):04X}" for c in pb))
+    label("CardPalettes")
+    for pal in art.CARD_PALETTES:
+        out.append("    dw " + ",".join(f"${rgb15(c):04X}" for c in pal))
+    label("CardTiles")         # a gold/blue diagonal band
+    band = [[2 if (x + y) % 8 < 3 else 1 for x in range(8)] for y in range(8)]
+    out += db_lines(encode_2bpp(band))
+    label("CardTilesEnd")
+    label("CardLines")         # per level: six centred 20-character lines
+    for i, title in enumerate(art.STAGE_TITLES):
+        quote = textwrap.wrap('"' + art.QUOTES[i] + '"', 18)
+        if len(quote) > 3:
+            raise SystemExit(f"quote {i} needs {len(quote)} lines")
+        quote += [""] * (3 - len(quote))
+        for line in [f"STAGE {i + 1} OF {len(art.STAGE_TITLES)}", title,
+                     "VS " + art.NAMES[i].strip()] + quote:
+            esc = line.center(20).replace('"', '\\"')
+            out.append(f'    db "{esc}", $FF')
+    # glossary: per page db stage, db opponent ($FF none), then title, footer and
+    # body lines as $FF-terminated strings, then $FE. Lives in its own ROM bank.
+    banked.append('SECTION "Glossary", ROMX')
+    pages = art.GLOSSARY
+    for n, (title, stage, who, text) in enumerate(pages):
+        if isinstance(text, str):
+            lines = textwrap.wrap(text, 18)
+        else:
+            lines = [l for t in text for l in textwrap.wrap(t, 18)]
+        if len(lines) > 6:
+            raise SystemExit(f"glossary page {n} ({title}) needs {len(lines)} lines (max 6)")
+        footer = f"< {n + 1}/{len(pages)} >   B:BACK"
+        banked.append(f"GlossPage{n}:")
+        banked.append(f"    db {stage}, ${0xFF if who is None else who:02X}")
+        for line in [title.center(20), footer.center(20)] + [" " + l for l in lines]:
+            banked.append(f'    db "{line}", $FF')
+        banked.append("    db $FE")
+    banked.append("GlossaryPages::")
+    for n in range(len(pages)):
+        banked.append(f"    dw GlossPage{n}")
+    label("OppNames")          # 5 characters each
+    out.append("    db " + ", ".join(f'"{n}"' for n in art.NAMES))
 
     # font: BG slots 0.., text in colour 3 of the text palette
     label("FontTiles")
@@ -292,25 +343,37 @@ def main():
                     t[y][x + 1] = art.TEXT_COLOUR
         out += db_lines(encode_2bpp(t))
     label("FontTilesEnd")
-    charmap = [f'    CHARMAP "{ch}", {i}' for i, ch in enumerate(FONT_ORDER)]
+    charmap = [f'    CHARMAP "{ch if ch != chr(34) else chr(92) + chr(34)}", {i}'
+               for i, ch in enumerate(FONT_ORDER)]
 
     first = 64
     report = []
-    for name, cv, pals in (("Game", art.scene_game(), art.GAME_PALETTES),
-                           ("Title", art.scene_title(glyph_rows), art.TITLE_PALETTES)):
-        tiles, tmap, amap, preview, lossy = build_screen(cv, pals, first)
-        if first + len(tiles) > 512:
-            raise SystemExit(f"{name}: {len(tiles)} tiles do not fit")
-        label(f"{name}Tiles")
+    screens = [(name, fn(), pals, True) for name, fn, pals in art.STAGES]
+    screens.append(("Title", art.scene_title(glyph_rows), art.TITLE_PALETTES, False))
+    screens.append(("Howto", art.scene_howto(), art.CITY_PALETTES, True))
+    for name, cv, pals, is_stage in screens:
+        banked.append(f'SECTION "{name} screen", ROMX')
+        if is_stage:
+            tiles, tmap, amap, preview, lossy = build_screen(
+                cv, pals, first, art.BOARD_TILES, art.BOARD_PALETTE)
+        else:
+            tiles, tmap, amap, preview, lossy = build_screen(cv, pals, first)
+        # VRAM bank 1 $8800+ (slots 384+) holds the opponents' sprite tiles
+        if first + len(tiles) > 384:
+            raise SystemExit(f"{name}: {len(tiles)} tiles do not fit (max {384 - first})")
+        banked.append(f"{name}Tiles::")
         for bank, addr, data in chunks_for(tiles, first):
-            out.append(f"    db {bank}")
-            out.append(f"    dw ${addr:04X}, {len(data) // 16}")
-            out += db_lines(data)
-        out.append("    db $FF")
-        label(f"{name}Map")
-        out += db_lines(tmap, 20)
-        label(f"{name}Attr")
-        out += db_lines(amap, 20)
+            banked.append(f"    db {bank}")
+            banked.append(f"    dw ${addr:04X}, {len(data) // 16}")
+            banked += db_lines(data)
+        banked.append("    db $FF")
+        banked.append(f"{name}Map::")
+        banked += db_lines(tmap, 20)
+        banked.append(f"{name}Attr::")
+        banked += db_lines(amap, 20)
+        banked.append(f"{name}Palettes::")
+        for pal in pals:
+            banked.append("    dw " + ",".join(f"${rgb15(C[c]):04X}" for c in pal))
         write_png(os.path.join(args.out, f"preview_{name.lower()}.png"), preview, lambda c: C[c])
         report.append(f"{name}: {len(tiles)} unique tiles, {lossy} tiles colour-mapped")
 
@@ -322,6 +385,11 @@ def main():
         store.append(encode_2bpp(top))
         store.append(encode_2bpp(bot))
         return n
+
+    label("StageTable")        # per level: ROM bank, palettes, tiles, map, attributes
+    for name, _, _ in art.STAGES + [("Title", None, None), ("Howto", None, None)]:
+        out.append(f"    db BANK({name}Tiles)")
+        out.append(f"    dw {name}Palettes, {name}Tiles, {name}Map, {name}Attr")
 
     label("PaddleSprites")   # per size: count, x offset of first column, then tile numbers
     for w in PADDLE_WIDTHS:
@@ -337,20 +405,27 @@ def main():
     out += db_lines(b"".join(obj))
     label("ObjTilesEnd")
 
-    # opponents: VRAM bank 1 from $8000, 24x32 = 3 x 2 pieces of 8x16 per frame
-    chars = []
+    # opponents: 32x32, two stacked layers; each opponent's 64 tiles are copied to
+    # VRAM bank 1 at $8000 when their match starts. Tile order: frame (idle, hit),
+    # layer (A, B), then eight 8x16 pieces, row by row.
     char_imgs = []
-    label("CharSprites")
-    for _, fn in art.CHARACTERS:
+    banked.append('SECTION "Opponent sprites", ROMX')
+    for name, fn in art.CHARACTERS:
+        tiles = []
         for hit in (False, True):
             img = fn(hit)
             char_imgs.append(img)
-            ids = [add_obj(chars, t, b) for t, b in obj_tiles_8x16(img)]
-            out.append("    db " + ",".join(str(i) for i in ids))
-    label("CharTiles")
-    out += db_lines(b"".join(chars))
-    label("CharTilesEnd")
-    if len(obj) > 128 or len(chars) > 256:
+            for layer in art.split_layers(img):
+                for t, b in obj_tiles_8x16(layer):
+                    add_obj(tiles, t, b)
+        assert len(tiles) == 64, len(tiles)
+        banked.append(f"OppTiles_{name}::")
+        banked += db_lines(b"".join(tiles))
+    label("OppTileTable")      # per opponent: ROM bank, address of 64 tiles
+    for name, _ in art.CHARACTERS:
+        out.append(f"    db BANK(OppTiles_{name})")
+        out.append(f"    dw OppTiles_{name}")
+    if len(obj) > 128:
         raise SystemExit("too many sprite tiles")
 
     label("PerspY")
@@ -374,24 +449,32 @@ def main():
         f"DEF CHAR_ZERO EQU {FONT_ORDER.index('0')}",
         f"DEF CHAR_SPACE EQU {FONT_ORDER.index(' ')}",
         f"DEF TEXT_PALETTE EQU {art.TEXT_PALETTE}",
+        f"DEF TITLE_SCREEN EQU {len(art.STAGES)}   ; StageTable entry of the title screen",
+        f"DEF NUM_LEVELS EQU {len(art.STAGES)}",
+        f"DEF NUM_PAGES EQU {len(art.GLOSSARY)}",
+        f"DEF HOWTO_SCREEN EQU {len(art.STAGES) + 1}",
+        "DEF CHAR_OAM_Y EQU 28      ; opponent sprite top (screen y 12): the far board hides the rest",
     ]
     with open(os.path.join(args.out, "consts.inc"), "w") as f:
         f.write("\n".join(consts + charmap) + "\n")
     with open(os.path.join(args.out, "assets.inc"), "w") as f:
         f.write("; generated by gbc/tools/makeassets.py -- do not edit\n" + "\n".join(out) + "\n")
+    with open(os.path.join(args.out, "assets_screens.inc"), "w") as f:
+        f.write("; generated by gbc/tools/makeassets.py -- do not edit\n" + "\n".join(banked) + "\n")
 
     # sprite sheet preview: opponents with their palettes
-    sheet = [[(0, 0, 0)] * (24 * 6 + 5) for _ in range(32)]
+    sheet = [[(12, 12, 14)] * (33 * len(char_imgs)) for _ in range(32)]
     for i, img in enumerate(char_imgs):
-        pal = art.OBJ_PALETTES[3 + i // 2]
+        pa, pb = art.CHAR_PALETTES[i // 2]
+        cols = (None,) + tuple(pa) + tuple(pb)
         for y in range(32):
-            for x in range(24):
-                v = img[y][x]
-                sheet[y][i * 25 + x] = pal[v] if v else (12, 12, 14)
+            for x in range(32):
+                if img[y][x]:
+                    sheet[y][i * 33 + x] = cols[img[y][x]]
     write_png(os.path.join(args.out, "preview_sprites.png"), sheet, lambda c: c)
     for r in report:
         print(r)
-    print(f"sprite tiles: {len(obj)} small, {len(chars)} opponents")
+    print(f"sprite tiles: {len(obj)} small, 64 per opponent")
 
 
 if __name__ == "__main__":

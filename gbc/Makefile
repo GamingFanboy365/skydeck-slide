@@ -23,7 +23,7 @@ build/%.o: src/%.asm src/hardware.inc build/assets/assets.inc build/assets/music
 
 $(ROM): $(OBJ)
 	$(LINK) -n build/skydeck.sym -m build/skydeck.map -o $@ $(OBJ)
-	$(FIX) -C -v -p 0xFF -t "SKYDECKSLIDE" -l 0x33 -k "SS" $@
+	$(FIX) -C -v -p 0xFF -m 0x19 -t "SKYDECKSLIDE" -l 0x33 -k "SS" $@
 
 # copy the ROM to release/ (the one ROM the repository may contain)
 release: $(ROM)

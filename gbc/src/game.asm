@@ -8,6 +8,9 @@ DEF ST_PLAY  EQU 2
 DEF ST_POINT EQU 3
 DEF ST_OVER  EQU 4
 DEF ST_CHAMP EQU 5
+DEF ST_CARD  EQU 6
+DEF ST_GLOSS EQU 7
+DEF ST_HOWTO EQU 8
 
 DEF WIN_SCORE   EQU 7
 DEF PLAYER_ZMIN EQU 144
@@ -41,22 +44,36 @@ RunState::
     jp hl
 
 StateTable:
-    dw StateTitle, StateIntro, StatePlay, StatePoint, StateOver, StateChamp
+    dw StateTitle, StateIntro, StatePlay, StatePoint, StateOver, StateChamp, StateCard
+    dw StateGloss, StateHowto
 
 ; ---------------------------------------------------------------------------
 ; title screen
 EnterTitle::
+    call DrawTitle
+    ld hl, SongTitle
+    jp PlaySong
+
+; back from the glossary: same screen, the title music keeps playing
+BackToTitle:
+    push af
+    call DrawTitle
+    pop af
+    ld [wMenu], a
+    ret
+
+DrawTitle:
     call LcdOff
     call LoadTitleScreen
-    ld hl, TxtStart
+    ld hl, TxtMenuStart
     ld de, $9800 + 12 * 32
     ld b, TEXT_PALETTE
     call PrintDirect
-    ld hl, TxtHelp1
+    ld hl, TxtMenuHowto
     ld de, $9800 + 14 * 32
     ld b, TEXT_PALETTE
     call PrintDirect
-    ld hl, TxtHelp2
+    ld hl, TxtMenuGloss
     ld de, $9800 + 16 * 32
     ld b, TEXT_PALETTE
     call PrintDirect
@@ -64,45 +81,380 @@ EnterTitle::
     xor a
     ld [wState], a
     ld [wTimer], a
-    ld hl, SongTitle
-    jp PlaySong
+    ld [wMenu], a
+    ret
 
 StateTitle:
     ld hl, wTimer
     inc [hl]
-    ld a, [hl]
-    and $1F
-    jr nz, .input
-    ld a, [wTimer]
-    and $20
-    ld hl, TxtStart
-    jr z, .show
-    ld hl, TxtBlank
-.show:
-    ld de, $9800 + 12 * 32
-    call SetRowFromString
-.input:
+    ldh a, [hJoyPressed]
+    ld b, a
+    bit PAD_DOWN, b
+    jr z, .up
+    ld a, [wMenu]
+    inc a
+    cp 3
+    jr c, .set
+    xor a
+    jr .set
+.up:
+    bit PAD_UP, b
+    jr z, .pick
+    ld a, [wMenu]
+    and a
+    jr nz, .dec
+    ld a, 3
+.dec:
+    dec a
+.set:
+    ld [wMenu], a
+    call SfxBlip
+.pick:
     ldh a, [hJoyPressed]
     and (1 << PAD_START) | (1 << PAD_A)
     ret z
     call SfxBlip
+    ld a, [wMenu]
+    dec a
+    jr z, EnterHowto
+    dec a
+    jr z, EnterGlossary
     xor a
     ld [wLevel], a
-    jp StartMatch
+    jp EnterCard
 
 ; ---------------------------------------------------------------------------
-StartMatch:
+; how to play: the city table with arrows, a paddle and a puck, text on top
+EnterHowto:
+    call LcdOff
+    ld a, HOWTO_SCREEN
+    call LoadScreen
+    ld hl, TxtHowto
+    ld de, $9800
+    ld b, 0
+.lines:
+    push de
+    call PrintDirect
+    pop de
+    ld a, e
+    add 32
+    ld e, a
+    jr nc, .nc
+    inc d
+.nc:
+    ld a, [hl]
+    cp $FE
+    jr nz, .lines
+    call LcdOn
+    ld hl, wObjects
+    ld bc, wObjectsEnd - wObjects
+    xor a
+    call Fill
+    ld a, 176
+    ld [wPlayerZ + 1], a
+    ld a, -10
+    ld [wPlayerX + 1], a
+    ld a, 150
+    ld [wPuckZ + 1], a
+    ld a, 8
+    ld [wPuckX + 1], a
+    ld a, ST_HOWTO
+    ld [wState], a
+    ret
+
+StateHowto:
+    ldh a, [hJoyPressed]
+    and (1 << PAD_B) | (1 << PAD_A) | (1 << PAD_START)
+    ret z
+    call SfxBlip
+    ld a, 1
+    jp BackToTitle
+
+; ---------------------------------------------------------------------------
+; glossary: pages of text, some with an opponent standing in the middle
+EnterGlossary:
+    xor a
+    ld [wPage], a
+    ld a, ST_GLOSS
+    ld [wState], a
+    jp DrawPage
+
+StateGloss:
+    ldh a, [hJoyPressed]
+    ld b, a
+    and (1 << PAD_B) | (1 << PAD_START)
+    ld a, 2
+    jp nz, BackToTitle
+    bit PAD_RIGHT, b
+    jr nz, .next
+    bit PAD_LEFT, b
+    ret z
+    ld a, [wPage]
+    and a
+    jr nz, .dec
+    ld a, NUM_PAGES
+.dec:
+    dec a
+    jr .turn
+.next:
+    ld a, [wPage]
+    inc a
+    cp NUM_PAGES
+    jr c, .turn
+    xor a
+.turn:
+    ld [wPage], a
+    call SfxBlip
+    ; fall through
+
+DrawPage:
+    call LcdOff
+    ld a, BANK(GlossaryPages)
+    ld [$2000], a
+    ld a, [wPage]
+    add a
+    ld hl, GlossaryPages
+    call AddAtoHL
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld a, [hl+]
+    ld [wGlossStage], a
+    ld a, [hl+]
+    ld [wGlossWho], a
+    ld a, l
+    ld [wGlossPtr], a
+    ld a, h
+    ld [wGlossPtr + 1], a
+    ld a, [wGlossStage]
+    call LoadVignette           ; switches ROM banks: fetch the text again after
+    ld a, BANK(GlossaryPages)
+    ld [$2000], a
+    ld a, [wGlossPtr]
+    ld l, a
+    ld a, [wGlossPtr + 1]
+    ld h, a
+    ld de, $9800 + 32 * 8
+    ld b, 0                     ; title
+    call PrintDirect
+    ld de, $9800 + 32 * 16
+    ld b, 0                     ; footer
+    call PrintDirect
+    ld de, $9800 + 32 * 10
+.body:
+    ld a, [hl]
+    cp $FE
+    jr z, .done
+    ld b, 0
+    push de
+    call PrintDirect
+    pop de
+    ld a, e
+    add 32
+    ld e, a
+    jr nc, .body
+    inc d
+    jr .body
+.done:
+    ld a, [wGlossWho]
+    cp $FF
+    jr z, .on
+    call LoadOpponentGfx
+.on:
+    jp LcdOn
+
+; ---------------------------------------------------------------------------
+; ---------------------------------------------------------------------------
+; splash card before each match: stage number, place, opponent
+EnterCard:
     call StopMusic
     call LcdOff
-    call LoadGameScreen
+    ld a, [wLevel]
+    call LoadVignette
+    ; the level's six lines: 21 bytes each, 126 per level
+    ld hl, CardLines
+    ld a, [wLevel]
+    and a
+    jr z, .lines
+    ld b, a
+    ld de, 126
+.skip:
+    add hl, de
+    dec b
+    jr nz, .skip
+.lines:
+    ld de, $9800 + 32 * 8
+    ld b, 0                     ; stage number
+    call PrintDirect
+    ld de, $9800 + 32 * 9
+    ld b, 0                     ; the place
+    call PrintDirect
+    ld de, $9800 + 32 * 11
+    ld b, 0                     ; VS name
+    call PrintDirect
+    ld de, $9800 + 32 * 13
+    ld b, 0                     ; the opponent's opening line
+    call PrintDirect
+    ld de, $9800 + 32 * 14
+    ld b, 0
+    call PrintDirect
+    ld de, $9800 + 32 * 15
+    ld b, 0
+    call PrintDirect
+    ld a, [wLevel]
+    call LoadOpponentGfx
     call LcdOn
     ld hl, SongMatch
     ld a, [wLevel]
-    cp 2
+    cp 4
     jr nz, .song
-    ld hl, SongOkta             ; the last opponent gets her own theme
+    ld hl, SongOkta             ; Okta has her own theme
 .song:
     call PlaySong
+    ld a, ST_CARD
+    ld [wState], a
+    ld a, 150
+    ld [wTimer], a
+    ret
+
+; a = stage: its palettes, tiles and full map, then rows 7-17 become a text
+; panel (palette 0) with bands on rows 7 and 17. The opponent stands at the
+; top exactly as in a match. LCD off.
+LoadVignette:
+    call LoadScreen
+    ld a, 1
+    ldh [rVBK], a
+    ld hl, CardTiles
+    ld de, $9000 + 127 * 16     ; slot 383: last BG tile of VRAM bank 1
+    ld bc, CardTilesEnd - CardTiles
+    call Copy
+    xor a
+    ldh [rVBK], a
+    ld hl, $9800 + 32 * 7
+    ld bc, 32 * 11
+    ld a, CHAR_SPACE
+    call Fill
+    ld a, 1
+    ldh [rVBK], a
+    ld hl, $9800 + 32 * 7
+    ld bc, 32 * 11
+    xor a
+    call Fill
+    xor a
+    ldh [rVBK], a
+    ld hl, $9800 + 32 * 7
+    call BandRow
+    ld hl, $9800 + 32 * 17
+    call BandRow
+    ; the opponent stands at the centre of the far end
+    xor a
+    ld [wOppX], a
+    ld [wOppX + 1], a
+    ld [wOppAnim], a
+    ld a, OPP_Z
+    ld [wOppZ], a
+    ret
+
+; dark card background, gold bands on rows 1 and 17 (LCD off)
+ClearCardScreen:
+    ld hl, CardPalettes
+    call LoadBgPalettes
+    xor a
+    ldh [rVBK], a
+    ld hl, CardTiles
+    ld de, $9000 + 64 * 16
+    ld bc, CardTilesEnd - CardTiles
+    call Copy
+    ld hl, $9800
+    ld bc, 32 * 18
+    ld a, CHAR_SPACE
+    call Fill
+    ld a, 1
+    ldh [rVBK], a
+    ld hl, $9800
+    ld bc, 32 * 18
+    xor a
+    call Fill
+    xor a
+    ldh [rVBK], a
+    ld hl, $9800 + 32 * 1
+    call BandRow
+    ld hl, $9800 + 32 * 17
+    jp BandRow
+
+; a = opponent: their two sprite palettes (3 and 4) and 64 tiles (LCD off)
+LoadOpponentGfx:
+    push af
+    swap a                      ; 16 bytes per opponent
+    ld hl, CharPalettes
+    call AddAtoHL
+    ld a, $80 | (3 * 8)
+    ldh [rOCPS], a
+    ld c, 16
+.pal:
+    ld a, [hl+]
+    ldh [rOCPD], a
+    dec c
+    jr nz, .pal
+    pop af
+    ld c, a
+    add a
+    add c                       ; 3 bytes per entry
+    ld hl, OppTileTable
+    call AddAtoHL
+    ld a, [hl+]
+    ld [$2000], a               ; the opponent's ROM bank
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld a, 1
+    ldh [rVBK], a
+    ld de, $8000
+    ld bc, 64 * 16
+    call Copy
+    xor a
+    ldh [rVBK], a
+    ret
+
+; a row of the gold band tile (slot 64, palette 1) at hl
+BandRow:
+    push hl
+    ld c, 20
+.t:
+    ld a, 127
+    ld [hl+], a
+    dec c
+    jr nz, .t
+    pop hl
+    ld a, 1
+    ldh [rVBK], a
+    ld c, 20
+.a:
+    ld a, $08                   ; palette 0, tile from VRAM bank 1
+    ld [hl+], a
+    dec c
+    jr nz, .a
+    xor a
+    ldh [rVBK], a
+    ret
+
+StateCard:
+    ld hl, wTimer
+    ld a, [hl]
+    and a
+    jr z, StartMatch
+    dec [hl]
+    cp 120                      ; can be skipped after half a second
+    ret nc
+    ldh a, [hJoyPressed]
+    and (1 << PAD_START) | (1 << PAD_A)
+    ret z
+    ; fall through
+
+StartMatch:
+    call LcdOff
+    call LoadGameScreen
+    call LcdOn
     xor a
     ld [wScoreP], a
     ld [wScoreO], a
@@ -363,8 +715,8 @@ StateOver:
     ld hl, wLevel
     inc [hl]
     ld a, [hl]
-    cp 3
-    jp nz, StartMatch
+    cp NUM_LEVELS
+    jp nz, EnterCard
     ld hl, SongWin
     call PlaySong
     ld hl, TxtChamp
@@ -743,8 +1095,8 @@ Predict:
     ld [wSilent], a
     call Random
     ld c, a
-    ld a, [wLevel]
-    add 4
+    ld hl, OppErrShift
+    call LevelByte
     ld b, a
     ld a, c
 .shift:
@@ -807,11 +1159,11 @@ UpdateOpp:
     ld hl, wOppX
     ld b, PADDLE_XMAX
     call ClampX
-    ; level 3 opponent steps forward to meet a close puck
+    ; from the fifth opponent on, step forward to meet a close puck
     ld c, OPP_Z
     ld a, [wLevel]
-    cp 2
-    jr nz, .zmove
+    cp 4
+    jr c, .zmove
     ld a, [wPredValid]
     and a
     jr z, .zmove
@@ -832,10 +1184,26 @@ UpdateOpp:
     ld [wOppZ], a
     ret
 
-OppSpeed:
-    dw $0090, $00E0, $0140
-OppReturnMax:
-    dw $0180, $0220, $0300
+; difficulty, one entry per opponent (Tomo .. Nova)
+OppSpeed:       ; sideways speed while heading for the predicted spot
+    dw $0080, $0098, $00B8, $00D8, $0100, $0128, $0150
+OppReturnMax:   ; fastest return
+    dw $0160, $0190, $01C0, $0200, $0240, $0280, $02C0
+OppServeSpeed:
+    dw $0110, $0120, $0130, $0140, $0150, $0160, $0170
+OppErrShift:    ; aiming error = random >> this (bigger = more accurate)
+    db 3, 3, 4, 4, 5, 5, 6
+OppReturnBonus: ; extra depth speed on each return
+    db $20, $24, $28, $30, $38, $40, $48
+OppAimShift:    ; how wide the return angles are
+    db 0, 0, 1, 1, 1, 2, 2
+
+; a = table entry for the current level from the byte table at hl
+LevelByte:
+    ld a, [wLevel]
+    call AddAtoHL
+    ld a, [hl]
+    ret
 
 CheckOppHit:
     ld a, [wPuckLive]
@@ -873,9 +1241,10 @@ CheckOppHit:
     add a
     add a                       ; rally * 8
     ld b, a
-    ld a, [wLevel]
-    swap a
-    add $20
+    push de
+    ld hl, OppReturnBonus
+    call LevelByte
+    pop de
     add b
     ld l, a
     ld h, 0
@@ -915,7 +1284,10 @@ OppAim:
     srl a
     srl a
     ld b, a
-    ld a, [wLevel]
+    push de
+    ld hl, OppAimShift
+    call LevelByte
+    pop de
     add b
     cp 3
     jr c, .shifts
@@ -938,11 +1310,12 @@ OppAim:
 
 OppServe:
     ld a, [wLevel]
-    swap a
     add a
-    add $20
+    ld hl, OppServeSpeed
+    call AddAtoHL
+    ld a, [hl+]
     ld [wPuckVZ], a
-    ld a, 1
+    ld a, [hl]
     ld [wPuckVZ + 1], a
     call OppAim
     ld a, 1
@@ -957,7 +1330,49 @@ DrawSprites::
     ld hl, wShadowOAM
     ld a, [wState]
     cp ST_TITLE
+    jr nz, .notitle
+    ld a, [wMenu]               ; a puck points at the chosen menu line
+    add a
+    add a
+    add a
+    add a                       ; 16 pixels between the lines
+    add 12 * 8 + 16
+    ld [hl+], a
+    ld a, 36 + 8
+    ld [hl+], a
+    ld a, [PuckSprites + 4]
+    ld [hl+], a
+    ld a, 2
+    ld [hl+], a
+    jr .clear
+.notitle:
+    cp ST_HOWTO
+    jr nz, .nothowto
+    ld a, 1
+    ld [wPuckVisible], a
+    call DrawPuck
+    ld a, [wPlayerZ + 1]
+    ld b, a
+    ld a, [wPlayerX + 1]
+    ld c, a
+    xor a
+    ld [wDrawAttr], a
+    call DrawPaddle
+    jr .clear
+.nothowto:
+    cp ST_GLOSS
+    jr nz, .notgloss
+    ld a, [wGlossWho]
+    cp $FF
     jr z, .clear
+    call DrawChar
+    jr .clear
+.notgloss:
+    cp ST_CARD
+    jr nz, .match
+    call DrawChar
+    jr .clear
+.match:
     ld a, [wPuckVisible]
     and a
     call nz, DrawPuck
@@ -1117,78 +1532,73 @@ DrawChar:
     ld a, [wOppX + 1]
     ld c, a
     call Project
-    push hl
-    ld a, [wLevel]
-    add a
-    ld c, a
+    ld a, CHAR_OAM_Y
+    ld [wDrawY], a              ; fixed height: the far board hides the lower body
+    ld a, e
+    sub 8                       ; 32 wide, centred: OAM x = screen x - 16 + 8
+    ld [wDrawX], a
+; Draw the opponent with its top-left OAM corner at wDrawX/wDrawY: two layers of
+; eight 8x16 pieces (layer B on top, palette 4; layer A below, palette 3), tiles
+; from VRAM bank 1: frame * 32 + layer * 16 + piece * 2.
+DrawCharHere:
     ld a, [wOppAnim]
     and a
     jr z, .idle
-    inc c
+    ld a, 32
 .idle:
-    ld a, c
-    add a
-    add c
-    add a                       ; 6 tiles per frame
-    ld hl, CharSprites
-    call AddAtoHL
-    ld a, l
-    ld [wDrawPtr], a
-    ld a, h
-    ld [wDrawPtr + 1], a
-    ld a, [wLevel]
-    add 3 | $08                 ; palette 3+level, tiles from VRAM bank 1
+    add 16                      ; start with layer B
+    ld [wDrawCount], a          ; current tile
+    ld a, 4 | $08
     ld [wDrawAttr], a
-    pop hl
-    ld a, d
-    sub 14
-    ld [wDrawY], a              ; top row OAM y
-    ld a, e
-    sub 4
-    ld [wDrawX], a              ; left column OAM x
-    ld b, 0                     ; piece 0..5, three per row
+    call .layer
+    ld a, [wDrawCount]
+    sub 32                      ; back to layer A of the same frame
+    ld [wDrawCount], a
+    ld a, 3 | $08
+    ld [wDrawAttr], a
+.layer:
+    ld b, 0                     ; piece 0..7
 .piece:
     ld a, b
-    cp 3
+    cp 4
     ld a, [wDrawY]
     jr c, .row0
     add 16
 .row0:
     ld [hl+], a
     ld a, b
-    cp 3
-    jr c, .col
-    sub 3
-.col:
+    and 3
     add a
     add a
-    add a                       ; column * 8
+    add a
     ld c, a
     ld a, [wDrawX]
     add c
     ld [hl+], a
-    push hl
-    ld a, [wDrawPtr]
-    ld l, a
-    ld a, [wDrawPtr + 1]
-    ld h, a
-    ld a, b
-    call AddAtoHL
-    ld c, [hl]
-    pop hl
-    ld a, c
+    ld a, [wDrawCount]
     ld [hl+], a
+    add 2
+    ld [wDrawCount], a
     ld a, [wDrawAttr]
     ld [hl+], a
     inc b
     ld a, b
-    cp 6
+    cp 8
     jr nz, .piece
     ret
 
 ; ---------------------------------------------------------------------------
 SECTION "Text", ROM0
 TxtStart:   db "    PRESS START     ", $FF
+TxtMenuStart: db "      START GAME    ", $FF
+TxtMenuGloss: db "      GLOSSARY      ", $FF
+TxtMenuHowto: db "      HOW TO PLAY   ", $FF
+TxtHowto:   db "    HOW TO PLAY     ", $FF
+            db " D-PAD: MOVE PADDLE ", $FF
+            db " PUSH INTO A SHOT TO", $FF
+            db " HIT HARDER. SLIDE  ", $FF
+            db " SIDEWAYS TO ANGLE. ", $FF
+            db $FE
 TxtBlank:   db "                    ", $FF
 TxtHelp1:   db " D-PAD MOVES PADDLE ", $FF
 TxtHelp2:   db "  FIRST TO 7 WINS   ", $FF
@@ -1199,7 +1609,6 @@ TxtMissed:  db "     MISSED!", $FF
 TxtWin:     db " YOU WIN!  PRESS A", $FF
 TxtLose:    db " YOU LOSE. PRESS A", $FF
 TxtChamp:   db " CHAMPION! PRESS A", $FF
-OppNames:   db "TOMO RUSTYOKTA "
 
 ; ---------------------------------------------------------------------------
 SECTION "Game variables", WRAM0
@@ -1211,6 +1620,11 @@ wScoreO::    ds 1
 wServer::    ds 1
 wPaused::    ds 1
 wWon::       ds 1
+wMenu::      ds 1
+wPage::      ds 1
+wGlossWho::  ds 1
+wGlossStage:: ds 1
+wGlossPtr::  ds 2
 wText::      ds 24
 wDrawAttr::  ds 1
 wDrawCount:: ds 1
