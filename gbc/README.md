@@ -28,7 +28,7 @@ The ROM is written to `build/skydeck.gbc`. `tools/makeassets.py` runs first and 
 
 ## Music
 
-All music is original. `tools/music.py` holds the songs as note text (one bar per string, checked to be 16 sixteenth-note steps) and compiles them for the driver in `src/music.asm`. The title plays "Rooftop Nocturne", a mellow A minor loop. Matches play "Skydeck Rush", a driving E minor tune with a second section. Short jingles mark a win or a loss. The driver uses the second pulse channel for the lead, the first for harmony (arpeggios or off-beat stabs), the wave channel for bass and the noise channel for drums. Sound effects borrow channels 1 and 4 for a few frames and the music picks up again on its next note. Pausing a match pauses the music where it is.
+All music is original. `tools/music.py` holds the songs as note text (one bar per string, checked to be 16 sixteenth-note steps) and compiles them for the driver in `src/music.asm`. The title plays "Rooftop Nocturne", a mellow A minor loop. Matches against Tomo and Rusty play "Skydeck Rush", a driving E minor tune with a second section, and the final match against Okta has its own faster, tenser theme, "Deep Current", in D minor. Short jingles mark a win or a loss. The driver uses the second pulse channel for the lead, the first for harmony (arpeggios or off-beat stabs), the wave channel for bass and the noise channel for drums. Sound effects borrow channels 1 and 4 for a few frames and the music picks up again on its next note. Pausing a match pauses the music where it is.
 
 `make release` copies the built ROM to `release/skydeck.gbc`, the one ROM the repository is allowed to contain.
 

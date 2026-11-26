@@ -97,6 +97,11 @@ StartMatch:
     call LoadGameScreen
     call LcdOn
     ld hl, SongMatch
+    ld a, [wLevel]
+    cp 2
+    jr nz, .song
+    ld hl, SongOkta             ; the last opponent gets her own theme
+.song:
     call PlaySong
     xor a
     ld [wScoreP], a

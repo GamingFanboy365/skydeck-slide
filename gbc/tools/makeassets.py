@@ -297,7 +297,7 @@ def main():
     first = 64
     report = []
     for name, cv, pals in (("Game", art.scene_game(), art.GAME_PALETTES),
-                           ("Title", art.scene_title(text_font), art.TITLE_PALETTES)):
+                           ("Title", art.scene_title(glyph_rows), art.TITLE_PALETTES)):
         tiles, tmap, amap, preview, lossy = build_screen(cv, pals, first)
         if first + len(tiles) > 512:
             raise SystemExit(f"{name}: {len(tiles)} tiles do not fit")

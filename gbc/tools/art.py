@@ -50,6 +50,7 @@ C = {
     "r0": (10, 3, 1), "r1": (21, 8, 2), "r2": (29, 17, 6), "r3": (31, 29, 19),
     # title logo
     "gold": (31, 25, 6), "orange": (30, 13, 3), "red": (17, 3, 4), "panel": (2, 1, 6),
+    "cream": (31, 31, 22),
 }
 
 PAL_SKY = ["s0", "s1", "s2", "moon"]            # also the text palette (text = colour 3)
@@ -61,9 +62,12 @@ PAL_WOOD = ["w0", "w1", "w2", "w3"]
 PAL_TABLE = ["t0", "t1", "t2", "t3"]
 PAL_RAIL = ["r0", "r1", "r2", "r3"]
 PAL_LOGO = ["panel", "gold", "orange", "red"]
+PAL_LOGO_HI = ["panel", "cream", "gold", "orange"]
+PAL_FRAME_EDGE = ["panel", "r0", "r1", "r2"]
 
 GAME_PALETTES = [PAL_SKY, PAL_SKYLINE, PAL_OUTER, PAL_BRICK, PAL_INNER, PAL_WOOD, PAL_TABLE, PAL_RAIL]
-TITLE_PALETTES = [PAL_SKY, PAL_SKYLINE, PAL_LOGO, PAL_BRICK, PAL_INNER, PAL_WOOD, PAL_TABLE, PAL_RAIL]
+TITLE_PALETTES = [PAL_SKY, PAL_SKYLINE, PAL_LOGO, PAL_BRICK, PAL_LOGO_HI, PAL_WOOD,
+                  PAL_FRAME_EDGE, PAL_RAIL]
 TEXT_PALETTE = 0
 TEXT_COLOUR = 3
 
@@ -374,22 +378,97 @@ def scene_game():
     return cv
 
 
-def scene_title(text_font):
-    cv = Canvas()
-    draw_sky(cv, 0, 84, moon=None)
-    draw_skyline(cv, 84, seed=5)
-    draw_string_lights(cv, 70, 78)
-    draw_parapet(cv, 82, 92)
-    draw_deck(cv, 92, cv.h)
-    # logo panel with a gold frame and the title in 3x letters
-    x0, y0, x1, y1 = 8, 12, 152, 66
+def logo_mask(glyph_rows, text, scale, shear):
+    """Pixels of a word in the 5x7 font at `scale`, slanted (top leans right)."""
+    h = 7 * scale
+    mask = set()
+    for i, ch in enumerate(text):
+        for ry, row in enumerate(glyph_rows(ch)):
+            for rx, bit in enumerate(row):
+                if not bit:
+                    continue
+                for sy in range(scale):
+                    for sx in range(scale):
+                        y = ry * scale + sy
+                        # slant in whole font-pixel steps so strokes stay solid
+                        x = i * 6 * scale + rx * scale + sx + round((6 - ry) * shear * scale)
+                        mask.add((x, y))
+    return mask
+
+
+def draw_logo_word(cv, mask, ox, oy):
+    """Drop shadow, dark outline, then a cream-gold-orange fill with a shine."""
+    h = max(y for _, y in mask) + 1
+    grow = {(x + dx, y + dy) for x, y in mask for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
+    for x, y in grow:
+        cv.set(ox + x + 2, oy + y + 2, "red")          # shadow
+    for x, y in grow - mask:
+        cv.set(ox + x, oy + y, "red")                  # outline
+    for x, y in mask:
+        t = y / h
+        if t < 0.28:
+            c = "cream" if t < 0.18 or dither(x, y, 0.5) else "gold"
+        elif t < 0.62:
+            c = "gold" if t < 0.52 or dither(x, y, 0.5) else "orange"
+        else:
+            c = "orange"
+        if t < 0.28 and (x + y) % 29 == 0:           # a glint on the top band
+            c = "cream"
+        cv.set(ox + x, oy + y, c)
+
+
+def draw_billboard(cv, x0, y0, x1, y1):
+    """A rooftop billboard: copper frame with marquee bulbs, dark face, two legs."""
+    for leg in (x0 + 18, x1 - 22):
+        for y in range(y1, 84):
+            for x in range(leg, leg + 4):
+                cv.set(x, y, "b1" if x == leg else "b0")
+        for y in range(y1 + 4, 84, 6):                # cross braces
+            for x in range(leg - 2, leg + 6):
+                cv.set(x, y, "b0")
     for y in range(y0, y1):
         for x in range(x0, x1):
-            frame = x in (x0, x1 - 1) or y in (y0, y1 - 1)
-            inner = x in (x0 + 2, x1 - 3) or y in (y0 + 2, y1 - 3)
-            cv.set(x, y, "gold" if frame else ("orange" if inner else "panel"))
-    text_font(cv, "SKYDECK", 17, 17, 3, "gold", "red", "orange")
-    text_font(cv, "SLIDE", 35, 42, 3, "gold", "red", "orange")
+            d = min(x - x0, x1 - 1 - x, y - y0, y1 - 1 - y)
+            if d == 0:
+                c = "r0"
+            elif d == 1:
+                lit = (x - x0) % 8 == 4 if y in (y0 + 1, y1 - 2) else (y - y0) % 8 == 4
+                c = "r3" if lit else ("r2" if (x - x0 < 3 or y - y0 < 3) else "r1")
+            elif d == 2:
+                c = "r1"
+            else:
+                c = "panel"
+            cv.set(x, y, c)
+
+
+def draw_puck_streak(cv, cx, cy):
+    for i, (dy, length) in enumerate(((-3, 12), (0, 18), (3, 10))):
+        for k in range(length):
+            if k % 4 != 3:
+                cv.set(cx - 8 - k, cy + dy, "orange" if k > length // 2 else "gold")
+    for y in range(cy - 5, cy + 6):
+        for x in range(cx - 5, cx + 6):
+            d = math.hypot(x - cx, y - cy)
+            if d <= 5:
+                c = "red" if d > 4 else ("cream" if (x - cx) + (y - cy) < -3 else "gold")
+                cv.set(x, y, c)
+
+
+def scene_title(glyph_rows):
+    cv = Canvas()
+    draw_sky(cv, 0, 84, moon=None)
+    draw_skyline(cv, 84, seed=5, water_tower=False)
+    draw_string_lights(cv, 76, 80)
+    draw_billboard(cv, 8, 8, 152, 72)
+    draw_parapet(cv, 82, 92)
+    draw_deck(cv, 92, cv.h)
+    top = logo_mask(glyph_rows, "SKYDECK", 3, 0.34)
+    draw_logo_word(cv, top, 80 - (max(x for x, _ in top) + 1) // 2, 15)
+    low = logo_mask(glyph_rows, "SLIDE", 3, 0.34)
+    lw = max(x for x, _ in low) + 1
+    lx = 80 - lw // 2 - 6
+    draw_logo_word(cv, low, lx, 41)
+    draw_puck_streak(cv, lx + lw + 14, 52)
     # dark panel behind the menu text (rows 12-17)
     cv.rect(0, 93, cv.w, 141, "s0")
     for x in range(cv.w):

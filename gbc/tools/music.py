@@ -130,6 +130,40 @@ MATCH = {
 }
 
 # ---------------------------------------------------------------------------
+# Okta's match: "Deep Current" -- D minor, faster and tenser, with a raised
+# 7th (C#) for bite. A section Dm Bb Gm A, B section Dm F C A Bb C A A.
+# ---------------------------------------------------------------------------
+OKTA_A = [("D", "m"), ("Bb", ""), ("G", "m"), ("A", "")] * 2
+OKTA_B = [("D", "m"), ("F", ""), ("C", ""), ("A", ""), ("Bb", ""), ("C", ""), ("A", ""), ("A", "")]
+OKTA_BASS = {"D": 2, "Bb": 2, "G": 2, "A": 2, "F": 2, "C": 3}
+OKTA_GROOVE = "K:2 H:1 H:1 S:2 H:2 K:2 K:1 H:1 S:2 H:2"
+OKTA_FILL = "K:2 S:1 S:1 S:2 S:2 K:2 S:1 S:1 S:2 S:2"
+OKTA = {
+    "tempo": 5, "duty1": 0x40, "env1": 0x62, "duty2": 0xC0, "env2": 0xB4, "vol3": 0x20,
+    "loop": True,
+    "ch2": bars(
+        "D5:2 F5:2 A5:2 D6:4 C#6:2 A5:4",
+        "Bb5:4 A5:2 G5:2 F5:6 r:2",
+        "G5:2 Bb5:2 D6:2 G5:2 F5:4 E5:4",
+        "E5:2 F5:2 G5:2 A5:6 C#5:4",
+        "D5:4 A5:4 F5:2 E5:2 D5:4",
+        "F5:2 G5:2 A5:2 Bb5:6 A5:4",
+        "G5:4 F5:2 E5:2 D5:4 Bb4:4",
+        "C#5:6 E5:2 A5:8",
+        "A5:2 A5:2 D6:2 A5:2 F6:4 E6:4",
+        "C6:4 A5:2 F5:2 C6:8",
+        "G5:2 C6:2 E6:2 G6:4 E6:2 C6:4",
+        "C#6:6 A5:2 E5:8",
+        "D6:2 C6:2 Bb5:2 F5:2 D6:4 Bb5:4",
+        "E6:2 D6:2 C6:2 G5:2 E6:4 C6:4",
+        "C#6:4 E6:4 A6:4 G6:2 E6:2",
+        "C#6:8 r:4 A5:2 C#6:2"),
+    "ch1": sum((chord_arp(r, k, 4) for r, k in OKTA_A + OKTA_B), []),
+    "ch3": sum((bass_bar(r, OKTA_BASS[r], "drive") for r, _ in OKTA_A + OKTA_B), []),
+    "ch4": bars(*[OKTA_GROOVE] * 7, OKTA_FILL, *[OKTA_GROOVE] * 7, OKTA_FILL, drums=True),
+}
+
+# ---------------------------------------------------------------------------
 # Jingles (play once)
 # ---------------------------------------------------------------------------
 WIN = {
@@ -149,7 +183,8 @@ LOSE = {
     "ch4": parse("K:4 r:4 K:4 r:4 S:16", drums=True),
 }
 
-SONGS = [("SongTitle", TITLE), ("SongMatch", MATCH), ("SongWin", WIN), ("SongLose", LOSE)]
+SONGS = [("SongTitle", TITLE), ("SongMatch", MATCH), ("SongOkta", OKTA), ("SongWin", WIN),
+         ("SongLose", LOSE)]
 
 
 def encode(events, channel, loop):
