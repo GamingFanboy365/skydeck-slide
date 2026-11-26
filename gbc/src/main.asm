@@ -40,16 +40,8 @@ Start:
     ld a, 77
     ld [wSeed], a
     call SoundInit
-    ; palettes
-    ld hl, BgPalettes
-    ld a, $80
-    ldh [rBCPS], a
-    ld c, 64
-.bgp:
-    ld a, [hl+]
-    ldh [rBCPD], a
-    dec c
-    jr nz, .bgp
+    ; sprite palettes (background palettes are loaded with each screen)
+    ld hl, ObjPalettes
     ld a, $80
     ldh [rOCPS], a
     ld c, 64
@@ -70,6 +62,15 @@ Start:
     ld de, $8000
     ld bc, ObjTilesEnd - ObjTiles
     call Copy
+    ; opponents' sprite tiles into VRAM bank 1 at $8000
+    ld a, 1
+    ldh [rVBK], a
+    ld hl, CharTiles
+    ld de, $8000
+    ld bc, CharTilesEnd - CharTiles
+    call Copy
+    xor a
+    ldh [rVBK], a
     call EnterTitle
     ld a, 1
     ldh [rIE], a
@@ -212,8 +213,22 @@ LoadMap::
     ldh [rVBK], a
     ret
 
+; hl = 8 background palettes
+LoadBgPalettes::
+    ld a, $80
+    ldh [rBCPS], a
+    ld c, 64
+.loop:
+    ld a, [hl+]
+    ldh [rBCPD], a
+    dec c
+    jr nz, .loop
+    ret
+
 ; load the game screen (LCD must be off)
 LoadGameScreen::
+    ld hl, GamePalettes
+    call LoadBgPalettes
     ld hl, GameTiles
     call LoadChunks
     ld hl, GameMap
@@ -231,13 +246,15 @@ LoadGameScreen::
     ldh [rVBK], a
     ld hl, $9800
     ld bc, 20
-    ld a, 4
+    ld a, TEXT_PALETTE
     call Fill
     xor a
     ldh [rVBK], a
     ret
 
 LoadTitleScreen::
+    ld hl, TitlePalettes
+    call LoadBgPalettes
     ld hl, TitleTiles
     call LoadChunks
     ld hl, TitleMap

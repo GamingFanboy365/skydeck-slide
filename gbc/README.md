@@ -22,7 +22,7 @@ If RGBDS is not on your `PATH`, point the Makefile at it (note the trailing slas
 make RGBDS=/path/to/rgbds/
 ```
 
-The ROM is written to `build/skydeck.gbc`. `tools/makeassets.py` runs first and generates every graphic: the scene is drawn in code using the same perspective maths the game uses, sprites come from the text pixel art in `art/sprites.txt`, and the font is defined in the script. PNG previews of the screens land in `build/assets/`.
+The ROM is written to `build/skydeck.gbc`. `tools/makeassets.py` runs first and generates every graphic: the scenes are drawn in code (`tools/art.py`) using the same perspective maths the game uses, with each palette a shading ramp of one material and textured surfaces throughout, the opponents are built from shapes in `tools/art.py` (outlined, lit from the top left), and the font is defined in `tools/makeassets.py`. PNG previews of the screens land in `build/assets/`.
 
 ## Testing
 

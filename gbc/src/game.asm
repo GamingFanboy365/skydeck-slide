@@ -50,15 +50,15 @@ EnterTitle::
     call LoadTitleScreen
     ld hl, TxtStart
     ld de, $9800 + 12 * 32
-    ld b, 7
+    ld b, TEXT_PALETTE
     call PrintDirect
     ld hl, TxtHelp1
     ld de, $9800 + 14 * 32
-    ld b, 7
+    ld b, TEXT_PALETTE
     call PrintDirect
     ld hl, TxtHelp2
     ld de, $9800 + 16 * 32
-    ld b, 7
+    ld b, TEXT_PALETTE
     call PrintDirect
     call LcdOn
     xor a
@@ -1093,7 +1093,7 @@ DrawPaddle:
     jr nz, .loop
     ret
 
-; the opponent stands behind its paddle: 16x32 from four 8x16 sprites
+; the opponent stands behind its paddle: 24x32 from six 8x16 sprites (VRAM bank 1)
 DrawChar:
     ld a, [wOppZ]
     ld b, a
@@ -1111,7 +1111,8 @@ DrawChar:
 .idle:
     ld a, c
     add a
-    add a                       ; 4 tiles per frame
+    add c
+    add a                       ; 6 tiles per frame
     ld hl, CharSprites
     call AddAtoHL
     ld a, l
@@ -1119,27 +1120,35 @@ DrawChar:
     ld a, h
     ld [wDrawPtr + 1], a
     ld a, [wLevel]
-    add 3
+    add 3 | $08                 ; palette 3+level, tiles from VRAM bank 1
     ld [wDrawAttr], a
     pop hl
     ld a, d
-    sub 10
-    ld d, a                     ; top row OAM y
-    ld b, 0                     ; part 0..3
-.part:
+    sub 14
+    ld [wDrawY], a              ; top row OAM y
+    ld a, e
+    sub 4
+    ld [wDrawX], a              ; left column OAM x
+    ld b, 0                     ; piece 0..5, three per row
+.piece:
     ld a, b
-    and 2
-    ld a, d
-    jr z, .row0
+    cp 3
+    ld a, [wDrawY]
+    jr c, .row0
     add 16
 .row0:
     ld [hl+], a
     ld a, b
-    and 1
-    ld a, e
-    jr z, .col0
-    add 8
-.col0:
+    cp 3
+    jr c, .col
+    sub 3
+.col:
+    add a
+    add a
+    add a                       ; column * 8
+    ld c, a
+    ld a, [wDrawX]
+    add c
     ld [hl+], a
     push hl
     ld a, [wDrawPtr]
@@ -1156,8 +1165,8 @@ DrawChar:
     ld [hl+], a
     inc b
     ld a, b
-    cp 4
-    jr nz, .part
+    cp 6
+    jr nz, .piece
     ret
 
 ; ---------------------------------------------------------------------------

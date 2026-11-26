@@ -11,7 +11,7 @@ OBJ := $(SRC:src/%.asm=build/%.o)
 
 all: $(ROM)
 
-build/assets/assets.inc: tools/makeassets.py art/sprites.txt
+build/assets/assets.inc: tools/makeassets.py tools/art.py
 	$(PY) tools/makeassets.py --out build/assets
 
 build/%.o: src/%.asm src/hardware.inc build/assets/assets.inc

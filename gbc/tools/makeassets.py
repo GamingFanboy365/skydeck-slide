@@ -1,81 +1,25 @@
 #!/usr/bin/env python3
 """Generate all graphics for Skydeck Slide (original art, drawn in code).
 
-Everything here is our own: the scene is drawn procedurally from the same
-perspective maths the game uses, sprites come from gbc/art/sprites.txt, and
-the font is defined below. Output goes to gbc/build/assets/ as RGBDS include
-files, plus PNG previews (written with zlib, no third-party modules).
+The artwork lives in art.py (scenes and opponents) and the font is defined
+below. This script turns it into Game Boy Color data: it picks the best
+4-colour palette for every 8x8 tile (mapping stray colours to the nearest
+palette colour), deduplicates tiles including flipped copies, and writes
+RGBDS include files plus PNG previews to gbc/build/assets/.
 
   python3 -I gbc/tools/makeassets.py [--out gbc/build/assets]
 """
 import argparse
 import os
 import struct
+import sys
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-
-# ---------------------------------------------------------------------------
-# world and perspective (shared with the game code through consts.inc)
-# ---------------------------------------------------------------------------
-Z_NEAR = 192          # player's end of the table
-TABLE_HALF = 48       # table half width in world units
-PERSP_D = 288         # distance of the eye behind the far end
-Y_A, Y_B = 4, 12672   # screen y = Y_A + Y_B / (PERSP_D - z)
-CENTER_X = 80
-
-
-def screen_y(z):
-    return Y_A + Y_B / (PERSP_D - z)
-
-
-def xscale64(z):
-    """Screen pixels per world unit, times 64."""
-    return 32 * PERSP_D / (PERSP_D - z)
-
-
-def screen_x(x, z):
-    return CENTER_X + x * xscale64(z) / 64
-
-
-def z_at_y(y):
-    return PERSP_D - Y_B / (y - Y_A)
-
-
-# ---------------------------------------------------------------------------
-# colours (GBC 5-bit RGB) and palettes
-# ---------------------------------------------------------------------------
-C = {
-    "sky": (2, 2, 9), "haze": (7, 3, 13), "star": (31, 31, 22), "bldg": (5, 4, 11),
-    "window": (31, 25, 8), "deck": (9, 8, 12), "deckd": (6, 5, 9),
-    "surf": (1, 9, 12), "line": (7, 21, 23), "rail": (24, 9, 3), "railhi": (31, 20, 9),
-    "white": (31, 31, 31), "gold": (31, 24, 4), "black": (0, 0, 0), "red": (26, 4, 6),
-    "dark": (3, 2, 6),
-}
-BG_PALETTES = [
-    ["sky", "haze", "bldg", "window"],       # 0 skyline
-    ["sky", "haze", "star", "bldg"],         # 1 stars
-    ["surf", "line", "rail", "railhi"],      # 2 table surface + rail
-    ["deck", "deckd", "rail", "railhi"],     # 3 rooftop deck + rail
-    ["sky", "white", "gold", "haze"],        # 4 text
-    ["deck", "surf", "rail", "railhi"],      # 5 corner tiles (deck + rail + surface)
-    ["sky", "gold", "red", "dark"],          # 6 title logo
-    ["deck", "white", "gold", "deckd"],      # 7 text on the deck
-]
-# colours that may be merged when a tile does not fit any palette
-SUBSTITUTE = {"line": "surf", "star": "haze", "window": "bldg", "deckd": "deck", "haze": "sky"}
-
-OBJ_PALETTES = [
-    [(0, 0, 0), (2, 4, 10), (8, 20, 31), (24, 30, 31)],     # 0 player paddle (blue)
-    [(0, 0, 0), (12, 2, 2), (28, 6, 6), (31, 22, 20)],      # 1 opponent paddle (red)
-    [(0, 0, 0), (4, 4, 4), (28, 28, 26), (31, 31, 31)],     # 2 puck
-    [(0, 0, 0), (30, 26, 18), (6, 18, 6), (14, 10, 4)],     # 3 Tomo
-    [(0, 0, 0), (31, 30, 28), (30, 14, 3), (6, 3, 3)],      # 4 Rusty
-    [(0, 0, 0), (31, 31, 31), (20, 8, 26), (4, 2, 8)],      # 5 Okta
-    [(0, 0, 0), (31, 31, 31), (31, 24, 4), (3, 2, 6)],      # 6 cursor/text sprites
-    [(0, 0, 0), (8, 8, 8), (16, 16, 16), (24, 24, 24)],     # 7 spare
-]
+sys.path.insert(0, HERE)
+import art  # noqa: E402
+from art import C, screen_y, xscale64  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # font: our own 5x7 glyphs
@@ -113,178 +57,55 @@ def glyph_rows(ch):
     return [[int(c) for c in r] for r in rows] if rows else [[0] * 5 for _ in range(7)]
 
 
-# ---------------------------------------------------------------------------
-# canvas helpers
-# ---------------------------------------------------------------------------
-class Canvas:
-    def __init__(self, w=160, h=144, fill="sky"):
-        self.w, self.h = w, h
-        self.px = [[fill] * w for _ in range(h)]
-
-    def set(self, x, y, c):
-        if 0 <= x < self.w and 0 <= y < self.h:
-            self.px[y][x] = c
-
-    def get(self, x, y):
-        return self.px[y][x]
-
-    def rect(self, x0, y0, x1, y1, c):
-        for y in range(max(0, y0), min(self.h, y1)):
-            for x in range(max(0, x0), min(self.w, x1)):
-                self.px[y][x] = c
-
-    def text(self, s, x, y, c, scale=1, shadow=None):
+def text_font(cv, s, x, y, scale, colour, shadow=None, edge=None):
+    """Big text on a canvas: shadow offset down-right, optional edge colour on the left/top."""
+    def plot(dx, dy, c):
         for i, ch in enumerate(s):
-            rows = glyph_rows(ch)
-            for ry, row in enumerate(rows):
+            for ry, row in enumerate(glyph_rows(ch)):
                 for rx, bit in enumerate(row):
                     if bit:
                         for sy in range(scale):
                             for sx in range(scale):
-                                px = x + i * 6 * scale + rx * scale + sx
-                                py = y + ry * scale + sy
-                                if shadow:
-                                    self.set(px + 1, py + 1, shadow)
-                                self.set(px, py, c)
-            if shadow:   # redraw glyph over its own shadow
-                for ry, row in enumerate(rows):
-                    for rx, bit in enumerate(row):
-                        if bit:
-                            for sy in range(scale):
-                                for sx in range(scale):
-                                    self.set(x + i * 6 * scale + rx * scale + sx,
-                                             y + ry * scale + sy, c)
-
-
-def lcg(seed):
-    while True:
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        yield seed
-
-
-def draw_sky(cv, y0, y1, seed=7):
-    rnd = lcg(seed)
-    for y in range(y0, y1):
-        for x in range(cv.w):
-            cv.set(x, y, "sky")
-    # haze bands near the horizon, dithered
-    for y in range(max(y0, y1 - 14), y1):
-        for x in range(cv.w):
-            if (x + y) % 2 == 0 or y > y1 - 6:
-                cv.set(x, y, "haze")
-    for _ in range(26):
-        x = next(rnd) % cv.w
-        y = y0 + next(rnd) % max(1, (y1 - y0 - 16))
-        cv.set(x, y, "star")
-
-
-def draw_skyline(cv, base_y, seed=3):
-    rnd = lcg(seed)
-    x = 0
-    while x < cv.w:
-        w = 8 + next(rnd) % 14
-        h = 6 + next(rnd) % 18
-        for yy in range(base_y - h, base_y):
-            for xx in range(x, min(cv.w, x + w)):
-                cv.set(xx, yy, "bldg")
-        # windows on a 3x3 grid, some lit
-        for yy in range(base_y - h + 2, base_y - 1, 3):
-            for xx in range(x + 2, x + w - 1, 3):
-                if next(rnd) % 3 == 0:
-                    cv.set(xx, yy, "window")
-        x += w + next(rnd) % 3
-
-
-def rail_width(z):
-    return max(13, round(14 * xscale64(z) / 64))
-
-
-def draw_table(cv):
-    """Rooftop deck, the table in perspective, rails and grid lines."""
-    far_y = round(screen_y(0))
-    near_y = cv.h
-    cv.rect(0, 40, cv.w, cv.h, "deck")
-    # deck planks: darker lines every 8 rows (perspective-free, it is decoration)
-    for y in range(44, cv.h, 9):
-        for x in range(cv.w):
-            if cv.get(x, y) == "deck":
-                cv.set(x, y, "deckd")
-    # far backboard rail across the end of the table
-    left0 = round(screen_x(-TABLE_HALF, 0))
-    right0 = round(screen_x(TABLE_HALF, 0))
-    rw0 = rail_width(0)
-    cv.rect(left0 - rw0, far_y - 5, right0 + rw0 + 1, far_y, "rail")
-    cv.rect(left0, far_y - 1, right0 + 1, far_y, "railhi")
-    for y in range(far_y, near_y):
-        z = z_at_y(y + 0.5)
-        lx = screen_x(-TABLE_HALF, z)
-        rx = screen_x(TABLE_HALF, z)
-        rw = rail_width(z)
-        for x in range(cv.w):
-            if lx <= x + 0.5 <= rx:
-                cv.set(x, y, "surf")
-            elif lx - rw <= x + 0.5 < lx or rx < x + 0.5 <= rx + rw:
-                inner = (lx - 2 <= x + 0.5 < lx) or (rx < x + 0.5 <= rx + 2)
-                cv.set(x, y, "railhi" if inner else "rail")
-    # grid: depth lines every 48 units, side lines at x = -24, 0, 24
-    for zl in (48, 96, 144):
-        y = round(screen_y(zl))
-        for x in range(round(screen_x(-TABLE_HALF, zl)) + 1, round(screen_x(TABLE_HALF, zl))):
-            cv.set(x, y, "line")
-    for xl in (-24, 0, 24):
-        for y in range(far_y, near_y):
-            z = z_at_y(y + 0.5)
-            cv.set(round(screen_x(xl, z) - 0.5), y, "line")
-    # centre spot
-    cy = round(screen_y(96))
-    for dx in (-2, -1, 0, 1, 2):
-        cv.set(CENTER_X + dx, cy - 1, "line")
-        cv.set(CENTER_X + dx, cy + 1, "line")
-
-
-def scene_game():
-    cv = Canvas()
-    draw_sky(cv, 0, 40)
-    draw_skyline(cv, 40)
-    draw_table(cv)
-    cv.rect(0, 0, cv.w, 8, "sky")          # HUD row, written by the game
-    return cv
-
-
-def scene_title():
-    cv = Canvas()
-    draw_sky(cv, 0, 88, seed=11)
-    draw_skyline(cv, 88, seed=5)
-    cv.rect(0, 88, cv.w, cv.h, "deck")
-    for y in range(92, cv.h, 9):
-        cv.rect(0, y, cv.w, y + 1, "deckd")
-    # logo: two words in the 5x7 font at 3x, gold on a dark slab
-    cv.rect(8, 14, 152, 70, "dark")
-    cv.text("SKYDECK", 17, 18, "gold", scale=3, shadow="red")
-    cv.text("SLIDE", 35, 44, "gold", scale=3, shadow="red")
-    return cv
+                                cv.set(x + i * 6 * scale + rx * scale + sx + dx,
+                                       y + ry * scale + sy + dy, c)
+    if shadow:
+        plot(1, 1, shadow)
+        plot(2, 2, shadow)
+    plot(0, 0, colour)
+    if edge:   # a lighter top edge on each stroke
+        for i, ch in enumerate(s):
+            for ry, row in enumerate(glyph_rows(ch)):
+                for rx, bit in enumerate(row):
+                    above = ry > 0 and glyph_rows(ch)[ry - 1][rx]
+                    if bit and not above:
+                        for sx in range(scale):
+                            cv.set(x + i * 6 * scale + rx * scale + sx, y + ry * scale, edge)
 
 
 # ---------------------------------------------------------------------------
 # tiles, palettes, maps
 # ---------------------------------------------------------------------------
-def tile_colors(cv, tx, ty):
-    return [[cv.get(tx * 8 + x, ty * 8 + y) for x in range(8)] for y in range(8)]
+def dist(a, b):
+    ca, cb = C[a], C[b]
+    return 3 * (ca[0] - cb[0]) ** 2 + 4 * (ca[1] - cb[1]) ** 2 + 2 * (ca[2] - cb[2]) ** 2
 
 
-def fit_palette(pix, palettes, where):
-    cols = {c for row in pix for c in row}
-    for attempt in range(len(SUBSTITUTE) + 1):
-        for i, pal in enumerate(palettes):
-            if cols <= set(pal):
-                return i, pix
-        # merge one substitutable colour and retry
-        for a, b in SUBSTITUTE.items():
-            if a in cols:
-                pix = [[b if c == a else c for c in row] for row in pix]
-                cols = {c for row in pix for c in row}
-                break
-    raise SystemExit(f"tile {where} colours {sorted(cols)} fit no palette")
+def fit_tile(pix, palettes):
+    """Choose the palette that reproduces the tile best; map other colours to the nearest."""
+    best = None
+    for i, pal in enumerate(palettes):
+        err = 0
+        for row in pix:
+            for c in row:
+                if c not in pal:
+                    err += min(dist(c, p) for p in pal)
+        if best is None or err < best[0]:
+            best = (err, i)
+    err, i = best
+    pal = palettes[i]
+    idx = [[pal.index(c) if c in pal else min(range(4), key=lambda k: dist(c, pal[k]))
+            for c in row] for row in pix]
+    return i, idx, err
 
 
 def encode_2bpp(idx):
@@ -320,23 +141,27 @@ class TileSet:
         return len(self.tiles) - 1, 0
 
 
-def build_screen(cv, first_slot):
-    """Turn a canvas into tiles + map + attributes. Tile slots start at first_slot."""
+def build_screen(cv, palettes, first_slot):
     ts = TileSet()
     raw = []
+    lossy = 0
+    preview = [[None] * cv.w for _ in range(cv.h)]
     for ty in range(18):
         for tx in range(20):
-            pal, pix = fit_palette(tile_colors(cv, tx, ty), BG_PALETTES, (tx, ty))
-            idx = [[BG_PALETTES[pal].index(c) for c in row] for row in pix]
+            pix = [[cv.get(tx * 8 + x, ty * 8 + y) for x in range(8)] for y in range(8)]
+            pal, idx, err = fit_tile(pix, palettes)
+            lossy += err > 0
+            for y in range(8):
+                for x in range(8):
+                    preview[ty * 8 + y][tx * 8 + x] = palettes[pal][idx[y][x]]
             t, flip = ts.add(idx)
             raw.append((t, flip, pal))
     tmap, amap = bytearray(), bytearray()
     for t, flip, pal in raw:
         slot = first_slot + t
-        bank = 0 if slot < 256 else 1
         tmap.append(slot & 0xFF)
-        amap.append(pal | flip | (bank << 3))
-    return ts.tiles, tmap, amap
+        amap.append(pal | flip | ((1 if slot >= 256 else 0) << 3))
+    return ts.tiles, tmap, amap, preview, lossy
 
 
 def bg_tile_address(slot):
@@ -346,7 +171,6 @@ def bg_tile_address(slot):
 
 
 def chunks_for(tiles, first_slot):
-    """Group consecutive tiles into (bank, address, data) runs that do not cross regions."""
     out = []
     for i, t in enumerate(tiles):
         bank, addr = bg_tile_address(first_slot + i)
@@ -361,31 +185,11 @@ def chunks_for(tiles, first_slot):
 # ---------------------------------------------------------------------------
 # sprites
 # ---------------------------------------------------------------------------
-def load_sprites(path):
-    sprites = {}
-    with open(path) as f:
-        lines = [l.rstrip("\n") for l in f]
-    i = 0
-    while i < len(lines):
-        l = lines[i].strip()
-        if l.startswith("sprite "):
-            _, name, size = l.split()
-            w, h = (int(v) for v in size.split("x"))
-            rows = [r.ljust(w, ".")[:w] for r in lines[i + 1:i + 1 + h]]
-            sprites[name] = [[0 if c == "." else int(c) for c in r] for r in rows]
-            i += 1 + h
-        else:
-            i += 1
-    return sprites
-
-
 def obj_tiles_8x16(img):
-    """Cut an image (w multiple of 8, h multiple of 16) into 8x16 columns, left to right, top to bottom."""
-    h = len(img)
-    w = len(img[0])
+    """Cut an image (w multiple of 8, h multiple of 16) into 8x16 pieces, row by row."""
     out = []
-    for oy in range(0, h, 16):
-        for ox in range(0, w, 8):
+    for oy in range(0, len(img), 16):
+        for ox in range(0, len(img[0]), 8):
             top = [row[ox:ox + 8] for row in img[oy:oy + 8]]
             bot = [row[ox:ox + 8] for row in img[oy + 8:oy + 16]]
             out.append((top, bot))
@@ -397,27 +201,34 @@ PUCK_SIZES = [3, 4, 5, 6, 7, 8]
 
 
 def paddle_image(w):
+    """A bevelled bar: light top edge, body, dark underside and ends."""
     h = 3 if w < 14 else 4
     cols = (w + 7) // 8
     img = [[0] * (cols * 8) for _ in range(16)]
     x0 = (cols * 8 - w) // 2
-    for y in range(h):
+    for y in range(h + 1):
         for x in range(w):
-            edge = x in (0, w - 1) or y == h - 1
-            img[y][x0 + x] = 1 if edge else (3 if y == 0 else 2)
-    return img, cols, x0
+            if y == h:
+                if 0 < x < w - 1:
+                    img[y][x0 + x] = 1          # shadow under the paddle
+                continue
+            end = x in (0, w - 1)
+            img[y][x0 + x] = 1 if end or y == h - 1 else (3 if y == 0 or x == 1 else 2)
+    return img, cols
 
 
 def puck_image(d):
     img = [[0] * 8 for _ in range(16)]
     r = d / 2
+    o = (8 - d) // 2
     for y in range(d):
         for x in range(d):
             dx, dy = x + 0.5 - r, y + 0.5 - r
             if dx * dx + dy * dy <= r * r + 0.3:
                 edge = dx * dx + dy * dy > (r - 1) ** 2
                 hi = dx < 0 and dy < 0 and d >= 5 and not edge
-                img[y + (8 - d) // 2][x + (8 - d) // 2] = 3 if hi else (1 if edge else 2)
+                lower = dy > 0.5 and d >= 5
+                img[y + o][x + o] = 3 if hi else (1 if edge or lower and not edge and dx > 0 else 2)
     return img
 
 
@@ -433,15 +244,13 @@ def db_lines(data, per=16):
     return ["    db " + ",".join(f"${b:02X}" for b in data[i:i + per]) for i in range(0, len(data), per)]
 
 
-def write_png(path, cv_or_rows, colors):
-    rows = cv_or_rows
-    h = len(rows)
-    w = len(rows[0])
+def write_png(path, rows, colour_of):
+    h, w = len(rows), len(rows[0])
     raw = bytearray()
     for r in rows:
         raw.append(0)
         for c in r:
-            rr, gg, bb = colors[c]
+            rr, gg, bb = colour_of(c)
             raw += bytes((rr * 255 // 31, gg * 255 // 31, bb * 255 // 31))
 
     def chunk(t, d):
@@ -462,35 +271,34 @@ def main():
     def label(name):
         out.append(f"{name}::")
 
-    # palettes
-    label("BgPalettes")
-    for pal in BG_PALETTES:
-        out.append("    dw " + ",".join(f"${rgb15(C[c]):04X}" for c in pal))
+    def palettes(name, pals):
+        label(name)
+        for pal in pals:
+            out.append("    dw " + ",".join(f"${rgb15(C[c]):04X}" for c in pal))
+
+    palettes("GamePalettes", art.GAME_PALETTES)
+    palettes("TitlePalettes", art.TITLE_PALETTES)
     label("ObjPalettes")
-    for pal in OBJ_PALETTES:
+    for pal in art.OBJ_PALETTES:
         out.append("    dw " + ",".join(f"${rgb15(c):04X}" for c in pal))
 
-    # font: bank 0, BG slots 0.. (white on palette colour 0)
-    font_tiles = []
+    # font: BG slots 0.., text in colour 3 of the text palette
+    label("FontTiles")
     for ch in FONT_ORDER:
         t = [[0] * 8 for _ in range(8)]
         for y, row in enumerate(glyph_rows(ch)):
             for x, b in enumerate(row):
                 if b:
-                    t[y][x + 1] = 1
-        font_tiles.append(t)
-    label("FontTiles")
-    data = b"".join(encode_2bpp(t) for t in font_tiles)
-    out += db_lines(data)
+                    t[y][x + 1] = art.TEXT_COLOUR
+        out += db_lines(encode_2bpp(t))
     label("FontTilesEnd")
-    out.append(f"DEF FONT_FIRST_SLOT EQU 0")
     charmap = [f'    CHARMAP "{ch}", {i}' for i, ch in enumerate(FONT_ORDER)]
 
-    # screens: tiles start after the font
     first = 64
-    previews = {}
-    for name, cv in (("Game", scene_game()), ("Title", scene_title())):
-        tiles, tmap, amap = build_screen(cv, first)
+    report = []
+    for name, cv, pals in (("Game", art.scene_game(), art.GAME_PALETTES),
+                           ("Title", art.scene_title(text_font), art.TITLE_PALETTES)):
+        tiles, tmap, amap, preview, lossy = build_screen(cv, pals, first)
         if first + len(tiles) > 512:
             raise SystemExit(f"{name}: {len(tiles)} tiles do not fit")
         label(f"{name}Tiles")
@@ -503,41 +311,48 @@ def main():
         out += db_lines(tmap, 20)
         label(f"{name}Attr")
         out += db_lines(amap, 20)
-        previews[name] = (cv, len(tiles))
+        write_png(os.path.join(args.out, f"preview_{name.lower()}.png"), preview, lambda c: C[c])
+        report.append(f"{name}: {len(tiles)} unique tiles, {lossy} tiles colour-mapped")
 
-    # sprites (OBJ tiles, 8x16 mode, VRAM bank 0 from $8000)
-    obj = []          # list of 16-byte tiles in order
+    # small sprites: VRAM bank 0 from $8000
+    obj = []
 
-    def add_obj(top, bot):
-        n = len(obj)
-        obj.append(encode_2bpp(top))
-        obj.append(encode_2bpp(bot))
+    def add_obj(store, top, bot):
+        n = len(store)
+        store.append(encode_2bpp(top))
+        store.append(encode_2bpp(bot))
         return n
 
     label("PaddleSprites")   # per size: count, x offset of first column, then tile numbers
     for w in PADDLE_WIDTHS:
-        img, cols, x0 = paddle_image(w)
-        ids = [add_obj(t, b) for t, b in obj_tiles_8x16(img)]
+        img, cols = paddle_image(w)
+        ids = [add_obj(obj, t, b) for t, b in obj_tiles_8x16(img)]
         out.append(f"    db {cols}, {-(cols * 8) // 2 & 0xFF}, " + ",".join(str(i) for i in ids)
                    + ",0" * (3 - cols))
     label("PuckSprites")
     for d in PUCK_SIZES:
-        img = puck_image(d)
-        (t, b), = obj_tiles_8x16(img)
-        out.append(f"    db {add_obj(t, b)}")
-    sprites = load_sprites(os.path.join(ROOT, "art", "sprites.txt"))
-    label("CharSprites")       # each frame: 6 tiles (2 wide x 2 tall of 8x16, 16x32)
-    for name in ("tomo_idle", "tomo_hit", "rusty_idle", "rusty_hit", "okta_idle", "okta_hit"):
-        img = sprites[name] + [[0] * 16 for _ in range(32 - len(sprites[name]))]
-        ids = [add_obj(t, b) for t, b in obj_tiles_8x16(img)]
-        out.append("    db " + ",".join(str(i) for i in ids))
-    if len(obj) > 256:
-        raise SystemExit("too many OBJ tiles")
+        (t, b), = obj_tiles_8x16(puck_image(d))
+        out.append(f"    db {add_obj(obj, t, b)}")
     label("ObjTiles")
     out += db_lines(b"".join(obj))
     label("ObjTilesEnd")
 
-    # perspective tables, z = 0..255
+    # opponents: VRAM bank 1 from $8000, 24x32 = 3 x 2 pieces of 8x16 per frame
+    chars = []
+    char_imgs = []
+    label("CharSprites")
+    for _, fn in art.CHARACTERS:
+        for hit in (False, True):
+            img = fn(hit)
+            char_imgs.append(img)
+            ids = [add_obj(chars, t, b) for t, b in obj_tiles_8x16(img)]
+            out.append("    db " + ",".join(str(i) for i in ids))
+    label("CharTiles")
+    out += db_lines(b"".join(chars))
+    label("CharTilesEnd")
+    if len(obj) > 128 or len(chars) > 256:
+        raise SystemExit("too many sprite tiles")
+
     label("PerspY")
     out += db_lines(bytes(min(255, round(screen_y(min(z, 280)))) for z in range(256)))
     label("PerspScale")
@@ -545,29 +360,38 @@ def main():
 
     def nearest(vals, v):
         return min(range(len(vals)), key=lambda i: abs(vals[i] - v))
-    label("PaddleSizeByZ")     # indexed by z/4
+    label("PaddleSizeByZ")
     out += db_lines(bytes(nearest(PADDLE_WIDTHS, 16 * xscale64(min(z * 4, 250)) / 64) for z in range(64)))
     label("PuckSizeByZ")
     out += db_lines(bytes(nearest(PUCK_SIZES, 6 * xscale64(min(z * 4, 250)) / 64) for z in range(64)))
 
     consts = [
         "; generated by gbc/tools/makeassets.py",
-        f"DEF Z_NEAR EQU {Z_NEAR}",
-        f"DEF TABLE_HALF EQU {TABLE_HALF}",
-        f"DEF CENTER_X EQU {CENTER_X}",
+        f"DEF Z_NEAR EQU {art.Z_NEAR}",
+        f"DEF TABLE_HALF EQU {art.TABLE_HALF}",
+        f"DEF CENTER_X EQU {art.CENTER_X}",
         f"DEF NUM_FONT_CHARS EQU {len(FONT_ORDER)}",
         f"DEF CHAR_ZERO EQU {FONT_ORDER.index('0')}",
         f"DEF CHAR_SPACE EQU {FONT_ORDER.index(' ')}",
+        f"DEF TEXT_PALETTE EQU {art.TEXT_PALETTE}",
     ]
     with open(os.path.join(args.out, "consts.inc"), "w") as f:
         f.write("\n".join(consts + charmap) + "\n")
     with open(os.path.join(args.out, "assets.inc"), "w") as f:
         f.write("; generated by gbc/tools/makeassets.py -- do not edit\n" + "\n".join(out) + "\n")
 
-    for name, (cv, n) in previews.items():
-        write_png(os.path.join(args.out, f"preview_{name.lower()}.png"), cv.px, C)
-        print(f"{name}: {n} unique tiles")
-    print(f"OBJ tiles: {len(obj)}")
+    # sprite sheet preview: opponents with their palettes
+    sheet = [[(0, 0, 0)] * (24 * 6 + 5) for _ in range(32)]
+    for i, img in enumerate(char_imgs):
+        pal = art.OBJ_PALETTES[3 + i // 2]
+        for y in range(32):
+            for x in range(24):
+                v = img[y][x]
+                sheet[y][i * 25 + x] = pal[v] if v else (12, 12, 14)
+    write_png(os.path.join(args.out, "preview_sprites.png"), sheet, lambda c: c)
+    for r in report:
+        print(r)
+    print(f"sprite tiles: {len(obj)} small, {len(chars)} opponents")
 
 
 if __name__ == "__main__":
