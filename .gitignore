@@ -1,0 +1,18 @@
+# Never commit ROMs, binaries or anything from other games (see CLAUDE.md)
+*.nes
+*.NES
+*.unf
+*.bin
+*.gb
+*.gbc
+# ...except our own game's release build (checked by tools/check_clean.py)
+!gbc/release/skydeck.gbc
+*.sav
+*.ppm
+*.idx
+*.ram
+*.wav
+*.avi
+rom/
+build/
+__pycache__/
