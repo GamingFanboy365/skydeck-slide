@@ -80,6 +80,7 @@ Start:
 MainLoop:
     call WaitVBlank
     call FlushRow
+    call MusicUpdate
     call ReadJoypad
     call RunState
     call DrawSprites
@@ -422,10 +423,14 @@ SoundInit::
     ldh [rNR51], a
     ret
 
+; Sound effects play on channel 1 (and 4 for the goal) and lock that channel
+; against the music for a few frames.
 SfxHit::
     ld a, [wSilent]
     and a
     ret nz
+    ld a, 10
+    ld [wSfxLock1], a
     xor a
     ldh [rNR10], a
     ld a, $80
@@ -442,6 +447,8 @@ SfxOppHit::
     ld a, [wSilent]
     and a
     ret nz
+    ld a, 10
+    ld [wSfxLock1], a
     xor a
     ldh [rNR10], a
     ld a, $80
@@ -458,17 +465,24 @@ SfxWall::
     ld a, [wSilent]
     and a
     ret nz
+    ld a, 6
+    ld [wSfxLock1], a
+    xor a
+    ldh [rNR10], a
     ld a, $40
-    ldh [rNR21], a
+    ldh [rNR11], a
     ld a, $A1
-    ldh [rNR22], a
+    ldh [rNR12], a
     ld a, $C0
-    ldh [rNR23], a
+    ldh [rNR13], a
     ld a, $86
-    ldh [rNR24], a
+    ldh [rNR14], a
     ret
 
 SfxGoal::
+    ld a, 40
+    ld [wSfxLock1], a
+    ld [wSfxLock4], a
     xor a
     ldh [rNR41], a
     ld a, $F5
@@ -490,14 +504,18 @@ SfxGoal::
     ret
 
 SfxBlip::
+    ld a, 8
+    ld [wSfxLock1], a
+    xor a
+    ldh [rNR10], a
     ld a, $80
-    ldh [rNR21], a
+    ldh [rNR11], a
     ld a, $81
-    ldh [rNR22], a
+    ldh [rNR12], a
     ld a, $D0
-    ldh [rNR23], a
+    ldh [rNR13], a
     ld a, $87
-    ldh [rNR24], a
+    ldh [rNR14], a
     ret
 
 ; ---------------------------------------------------------------------------

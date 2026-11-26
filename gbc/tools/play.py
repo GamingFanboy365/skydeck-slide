@@ -78,12 +78,14 @@ def main():
     ap.add_argument("--bot", type=int, default=0, metavar="SKILL",
                     help="after the input script, a simple bot plays (1-3; higher = sharper)")
     ap.add_argument("--report", type=int, default=0, help="print scores every N frames")
+    ap.add_argument("--wav", help="record the sound to this WAV file")
     ap.add_argument("--poke", action="append", default=[],
                     help="FRAME:SYMBOL=VALUE, write a byte (for testing later stages)")
     args = ap.parse_args()
 
     from pyboy import PyBoy
-    pb = PyBoy(args.rom, window="null", sound_emulated=False, cgb=True)
+    pb = PyBoy(args.rom, window="null", sound_emulated=bool(args.wav), cgb=True)
+    audio = []
     held = parse_inputs(args.input)
     shots = {int(x) for x in args.shots.split(",") if x}
     syms = load_syms(os.path.splitext(args.rom)[0] + ".sym")
@@ -108,7 +110,9 @@ def main():
         for b in want - pressed:
             pb.button_press(b)
         pressed = set(want)
-        pb.tick(1, f in shots)
+        pb.tick(1, f in shots or bool(args.wav), bool(args.wav))
+        if args.wav:
+            audio.append(pb.sound.ndarray.copy())
         if args.report and f % args.report == 0:
             m = pb.memory
             print(f"f{f}: state={m[syms['wState']]} level={m[syms['wLevel']]} "
@@ -126,7 +130,18 @@ def main():
                     vals.append(f"{name}=" + ("?" if a is None else
                                 " ".join(f"{pb.memory[a + i]:02X}" for i in range(n))))
                 print(f"f{f}: " + "  ".join(vals))
+    rate = pb.sound.sample_rate if args.wav else 0
     pb.stop(save=False)
+    if args.wav:
+        import wave
+        import numpy as np
+        data = np.concatenate(audio).astype(np.int16) * 256
+        with wave.open(args.wav, "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(data.tobytes())
+        print(f"wrote {args.wav} ({len(data) / rate:.1f}s at {rate} Hz)")
     if args.sheet and images:
         from PIL import Image
         cols = min(6, len(images))

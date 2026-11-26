@@ -64,7 +64,8 @@ EnterTitle::
     xor a
     ld [wState], a
     ld [wTimer], a
-    ret
+    ld hl, SongTitle
+    jp PlaySong
 
 StateTitle:
     ld hl, wTimer
@@ -91,9 +92,12 @@ StateTitle:
 
 ; ---------------------------------------------------------------------------
 StartMatch:
+    call StopMusic
     call LcdOff
     call LoadGameScreen
     call LcdOn
+    ld hl, SongMatch
+    call PlaySong
     xor a
     ld [wScoreP], a
     ld [wScoreO], a
@@ -222,9 +226,11 @@ StatePlay:
     xor 1
     ld [wPaused], a
     jr z, .unpause
+    call PauseMusic
     ld hl, TxtPaused
     jp ShowMessage
 .unpause:
+    call ResumeMusic
     jp UpdateHud
 .notpause:
     ld a, [wPaused]
@@ -316,10 +322,14 @@ StatePoint:
     ld [wState], a
     ret
 .won:
+    ld hl, SongWin
+    call PlaySong
     ld a, 1
     ld hl, TxtWin
     jr .over
 .lost:
+    ld hl, SongLose
+    call PlaySong
     xor a
     ld hl, TxtLose
 .over:
@@ -350,6 +360,8 @@ StateOver:
     ld a, [hl]
     cp 3
     jp nz, StartMatch
+    ld hl, SongWin
+    call PlaySong
     ld hl, TxtChamp
     call ShowMessage
     ld a, ST_CHAMP
