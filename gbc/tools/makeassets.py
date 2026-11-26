@@ -351,6 +351,8 @@ def main():
     screens = [(name, fn(), pals, True) for name, fn, pals in art.STAGES]
     screens.append(("Title", art.scene_title(glyph_rows), art.TITLE_PALETTES, False))
     screens.append(("Howto", art.scene_howto(), art.CITY_PALETTES, True))
+    screens.append(("Hall", art.scene_hall(), art.HALL_PALETTES, True))
+    screens.append(("Chalk", art.scene_chalk(glyph_rows), art.CHALK_PALETTES, False))
     for name, cv, pals, is_stage in screens:
         banked.append(f'SECTION "{name} screen", ROMX')
         if is_stage:
@@ -387,7 +389,8 @@ def main():
         return n
 
     label("StageTable")        # per level: ROM bank, palettes, tiles, map, attributes
-    for name, _, _ in art.STAGES + [("Title", None, None), ("Howto", None, None)]:
+    extra = [("Title", None, None), ("Howto", None, None), ("Hall", None, None), ("Chalk", None, None)]
+    for name, _, _ in art.STAGES + extra:
         out.append(f"    db BANK({name}Tiles)")
         out.append(f"    dw {name}Palettes, {name}Tiles, {name}Map, {name}Attr")
 

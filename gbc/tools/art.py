@@ -75,7 +75,7 @@ C = {
     "bw0": (10, 8, 6), "bw1": (17, 14, 10), "bw2": (23, 20, 15), "bw3": (28, 26, 20),
     # volcano forge (Blaze): smoky red night, lava, basalt, obsidian, stone floor
     "v0": (2, 0, 1), "v1": (7, 1, 3), "v2": (14, 3, 4), "lavaY": (31, 28, 10),
-    "rock0": (4, 3, 4), "rock1": (9, 7, 8), "rock2": (14, 11, 11), "lavaO": (31, 13, 2),
+    "rock0": (5, 3, 5), "rock1": (13, 8, 9), "rock2": (20, 14, 13), "lavaO": (31, 13, 2),
     "lavaR": (22, 3, 1),
     "ob0": (2, 1, 4), "ob1": (7, 4, 11), "ob2": (14, 10, 20), "ob3": (31, 16, 4),
     "st0": (4, 3, 3), "st1": (8, 6, 6), "st2": (12, 10, 9), "st3": (17, 14, 12),
@@ -86,6 +86,14 @@ C = {
     "pn0": (4, 5, 8), "pn1": (9, 11, 15), "pn2": (15, 18, 22), "pnl": (10, 28, 31),
     "ch0": (5, 6, 9), "ch1": (13, 15, 19), "ch2": (22, 24, 27), "ch3": (31, 31, 31),
     "fl0": (4, 4, 6), "fl1": (8, 9, 11), "fl2": (12, 13, 16), "fl3": (17, 18, 21),
+    # hall of rivals: panelled wall, spotlight, trophies, marble podium, carpet
+    "h0": (4, 2, 3), "h1": (9, 4, 4), "h2": (14, 7, 5), "h3": (20, 11, 7),
+    "spot": (27, 22, 14), "spot2": (31, 29, 21),
+    "tg0": (12, 7, 1), "tg1": (24, 17, 3), "tg2": (31, 27, 9),
+    "mb0": (9, 9, 12), "mb1": (17, 17, 20), "mb2": (24, 24, 26), "mb3": (31, 31, 31),
+    "cp0": (8, 1, 3), "cp1": (15, 2, 5), "cp2": (22, 5, 8),
+    # chalkboard
+    "cb0": (3, 10, 7), "cb1": (5, 13, 9), "chd": (16, 21, 18), "chk": (30, 31, 29),
 }
 
 PAL_SKY = ["s0", "s1", "s2", "moon"]            # also the text palette (text = colour 3)
@@ -1088,49 +1096,118 @@ def scene_desert():
 # ---------------------------------------------------------------------------
 def scene_volcano():
     cv = Canvas(fill="v0")
+    # sky: a dark red night, glowing low down
     for y in range(8, 40):
         t = (y - 8) / 32
         for x in range(cv.w):
-            c = "v1" if dither(x, y, t) else "v0"
-            if noise(x // 4, y // 2, 71) < 0.25 * t:
-                c = "v2"                                  # glowing smoke
+            cv.set(x, y, "v1" if dither(x, y, t * 1.1) else "v0")
+    # smoke: billowing puffs lit from below by the lava
+    puffs = []
+    for i in range(26):
+        cx = 52 + noise(i, 1, 71, 997) * 70 + i * 0.6
+        cy = 10 + noise(i, 2, 71, 997) * 12
+        r = 3 + noise(i, 3, 71, 997) * 4.5
+        puffs.append((cx, cy, r))
+    for cx, cy, r in sorted(puffs, key=lambda p: p[1]):
+        for y in range(int(cy - r), int(cy + r) + 1):
+            for x in range(int(cx - r), int(cx + r) + 1):
+                d = math.hypot(x - cx, (y - cy) * 1.15)
+                if d <= r:
+                    lit = (y - cy) / r                   # lower half catches the glow
+                    c = "v2" if lit > 0.25 and dither(x, y, lit) else "v1"
+                    if d > r - 1 and dither(x, y, 0.5):
+                        c = "v0"
+                    cv.set(x, y, c)
+    for i in range(22):                                  # embers drifting up
+        x = int(noise(i, 5, 72, 997) * cv.w)
+        y = 9 + int(noise(i, 6, 72, 997) * 24)
+        cv.set(x, y, "lavaY" if i % 3 == 0 else "lavaO")
+    # distant jagged ridges with a rim of light
+    for x in range(cv.w):
+        top = 30 + 3 * math.sin(x / 9.0) + 2 * noise(x // 3, 0, 73, 997) * 2
+        for y in range(int(top), 40):
+            cv.set(x, y, "rock0")
+        cv.set(x, int(top), "rock1")
+    # the volcano: concave slopes, ragged edges, gullies, lit on the left
+    for y in range(12, 40):
+        t = (y - 12) / 28
+        half = 8 + 62 * t ** 1.7
+        rough = 2.5 * (noise(y, 1, 74, 997) - 0.5)
+        x0, x1 = int(80 - half + rough), int(80 + half - rough)
+        for x in range(x0, x1):
+            f = (x - x0) / max(1, x1 - x0)
+            c = "rock1" if f < 0.35 else "rock0"
+            if f < 0.35 and dither(x, y, 0.35):
+                c = "rock0"
+            gully = (x * 3 + y * 5) % 17 == 0 or (x * 5 - y * 3) % 19 == 0
+            if gully and y > 15:
+                c = "rock0" if c == "rock1" else "rock1"
             cv.set(x, y, c)
-    # the volcano with lava running down
-    for y in range(13, 40):
-        t = (y - 13) / 27
-        half = 7 + 66 * t ** 1.8                          # concave slopes
-        for x in range(int(80 - half), int(80 + half)):
-            c = "rock1" if x < 80 - half * 0.3 else "rock0"
-            if y < 15 and abs(x - 80) < 4:
-                c = "lavaO"                               # glowing crater
-            cv.set(x, y, c)
-    for k, (x0, drift) in enumerate(((78, -0.6), (82, 0.7), (80, 0.1))):
-        x = x0
-        for y in range(15, 40):
-            x += drift * (0.5 + noise(k, y, 72))
-            cv.set(round(x), y, "lavaO")
-            if y % 3 == 0:
-                cv.set(round(x) + 1, y, "lavaO")
-    for y in range(9, 15):                                # eruption glow
-        for x in range(70, 91):
-            if dither(x, y, 0.6 - abs(x - 80) / 20) and noise(x, y, 73) < 0.7:
-                cv.set(x, y, "lavaO" if y > 11 else "v2")
-    # lava river across the background
-    for y in range(34, 40):
+    for y in range(12, 15):                              # glowing crater
+        for x in range(73, 88):
+            d = abs(x - 80.5) / (7.5 - (y - 12))
+            if d < 1:
+                cv.set(x, y, "lavaY" if y == 12 and d < 0.5 else "lavaO")
+    for k in range(14):                                  # plume above the crater
+        y = 11 - k * 0.5
+        for x in range(76 - k // 3, 85 + k // 3):
+            if dither(x, int(y), 0.5 - k * 0.03) and noise(x, k, 75) < 0.6:
+                cv.set(x, int(y), "lavaO" if k < 4 else "v2")
+    # lava flows: start along the crater rim and wander down the slopes
+    for i, (x0, drift) in enumerate(((75, -1.0), (79, -0.35), (83, 0.45), (86, 1.05))):
+        x = float(x0)
+        for y in range(14, 34):
+            x += drift * (0.6 + 0.8 * noise(i, y, 76, 997)) + 1.1 * math.sin(y / 2.5 + i * 2)  * 0.35
+            xi = round(x)
+            if dither(xi - 2, y, 0.35):
+                cv.set(xi - 2, y, "lavaO")              # glow on the rock
+            if dither(xi + 2, y, 0.35):
+                cv.set(xi + 2, y, "lavaO")
+            cv.set(xi, y, "lavaY" if (y + i) % 5 else "lavaO")
+            cv.set(xi + (1 if drift > 0 else -1), y, "lavaO")
+            if y > 26 and i % 2 == 0:                    # flows thin out lower down
+                break
+    # rocky ground at the foot, with a winding lava channel and pools
+    for y in range(33, 40):
         for x in range(cv.w):
-            if abs(x - 80) > 32 or y > 36:
-                g = noise(x // 2, y, 74)
-                cv.set(x, y, "lavaY" if g < 0.15 else ("lavaO" if g < 0.6 else "lavaR"))
-    # basalt block wall glowing at the seams
+            c = "rock0" if noise(x // 2, y, 77) > 0.2 else "rock1"
+            if y == 33 and noise(x, 0, 81, 997) < 0.5:
+                continue                                 # broken skyline of rocks
+            cv.set(x, y, c)
+    for x in range(cv.w):
+        yc = 36.5 + 1.6 * math.sin(x / 11.0) + 0.8 * math.sin(x / 4.3)
+        for y in range(int(yc) - 1, int(yc) + 2):
+            if 33 < y < 40:
+                core = y == int(yc)
+                cv.set(x, y, "lavaY" if core and noise(x, y, 82) < 0.6 else "lavaO")
+        if noise(x, 1, 83, 997) < 0.1 and 34 < int(yc) - 2:
+            cv.set(x, int(yc) - 2, "lavaO")              # glow on the banks
+    for px, py in ((22, 35), (128, 36), (148, 34)):     # small pools
+        for x in range(px - 3, px + 4):
+            for y in range(py - 1, py + 2):
+                if abs(x - px) + abs(y - py) * 2 < 4:
+                    cv.set(x, y, "lavaY" if abs(x - px) < 2 and y == py else "lavaO")
+    # basalt columns behind the table, glowing in the seams
     for y in range(40, 48):
         for x in range(cv.w):
             ry = y - 40
-            off = 6 if ry >= 4 else 0
-            seam = ry in (3, 7) or (x + off) % 12 == 0
-            c = ("lavaO" if noise(x, y, 75) < 0.3 else "rock0") if seam else \
-                ("rock2" if ry in (0, 4) else "rock1")
+            col = x // 7
+            top = 41 + (col * 3) % 3
+            c = "rock1" if x % 7 < 2 else ("rock2" if x % 7 < 4 else "rock1")
+            if x % 7 == 6:
+                c = "lavaO" if noise(x, y, 79) < 0.35 else "rock0"     # glowing seam
+            if y == top:
+                c = "rock2"                                            # column caps
+            elif y < top:
+                c = "lavaO" if dither(x, y, 0.3) else "rock0"
+            if ry == 7:
+                c = "rock0"
             cv.set(x, y, c)
     draw_deck(cv, 48, cv.h, ("st0", "st1", "st2", "st3"), plank=8)
+    for y in range(48, cv.h):                            # floor tiles: cracked stone
+        for x in range(cv.w):
+            if (x + (y // 8) * 4) % 16 == 0 or noise(x // 2, y // 2, 80) < 0.03:
+                cv.set(x, y, "st0")
     draw_props(cv, "volcano", ("st0", "st1", "st2", "st3"))
     draw_table(cv, ("ob0", "ob1", "ob2", "ob3"), "obsidian")
     cv.rect(0, 0, cv.w, 8, "v0")
@@ -1218,6 +1295,160 @@ def scene_howto():
     bx, by = round(screen_x(45, 96)), round(screen_y(96))
     for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):   # bounce sparkle
         cv.set(bx - 4 + dx * 2, by + dy * 2, "t3")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# glossary backdrops: the Hall of Rivals (opponent profiles) and a chalkboard
+# (puck terms). Rows 7-17 become the text panel at run time.
+# ---------------------------------------------------------------------------
+HALL_PALETTES = [
+    ["h0", "h1", "h2", "spot2"],            # 0 text panel, dark wall
+    ["h1", "h2", "h3", "spot"],             # 1 panelled wall in the spotlight
+    ["h0", "tg0", "tg1", "tg2"],            # 2 trophies
+    ["h0", "h1", "h3", "tg1"],              # 3 shelves
+    ["cp0", "cp1", "cp2", "mb1"],           # 4 carpet
+    ["h0", "spot", "spot2", "h2"],          # 5 spotlight glow
+    ["cp0", "cp2", "mb0", "mb1"],           # 6 carpet meets podium
+    ["mb0", "mb1", "mb2", "mb3"],           # 7 marble podium (in front of the opponent)
+]
+CHALK_PALETTES = [
+    ["cb0", "cb1", "chd", "chk"],           # 0 the board and its chalk (text palette)
+    ["w0", "w1", "w2", "w3"],               # 1 wooden frame
+    ["cb0", "w0", "w2", "chk"],             # 2 frame meets board
+] + [["cb0", "cb1", "chd", "chk"]] * 5
+
+
+def trophy(cv, x, base, h, kind):
+    """A little cup or star on a plinth, shaded gold."""
+    for y in range(base - 3, base):
+        for xx in range(x - 3, x + 4):
+            cv.set(xx, y, "tg0" if y == base - 1 else "tg1")
+    if kind == "cup":
+        for y in range(base - h, base - 3):
+            w = 1 if y > base - h + 5 else 4 - (base - h + 5 - y) // 3
+            for xx in range(x - w, x + w + 1):
+                cv.set(xx, y, "tg2" if xx < x else ("tg1" if xx < x + w else "tg0"))
+        for yy in range(base - h + 1, base - h + 4):
+            cv.set(x - 5, yy, "tg1"); cv.set(x + 5, yy, "tg0")      # handles
+    else:
+        cy = base - h + 4
+        for a in range(0, 360, 72):
+            for k in range(5):
+                cv.set(x + k * math.cos(math.radians(a - 90)), cy + k * math.sin(math.radians(a - 90)),
+                       "tg2" if a < 144 else "tg1")
+        for y in range(cy + 3, base - 3):
+            cv.set(x, y, "tg1")
+
+
+def scene_hall():
+    cv = Canvas(fill="h1")
+    # panelled wall: frames with bevels
+    for y in range(8, 40):
+        for x in range(cv.w):
+            px, py = x % 32, (y - 8) % 16
+            c = "h1"
+            if px in (0, 31) or py in (0, 15):
+                c = "h0"
+            elif px == 1 or py == 1:
+                c = "h3"
+            elif px in (29, 30) or py == 14:
+                c = "h0" if dither(x, y, 0.5) else "h1"
+            elif noise(x // 2, y, 91) < 0.08:
+                c = "h2"                                  # wood grain
+            cv.set(x, y, c)
+    # trophy shelves on both sides
+    for sx in (6, 118):
+        for x in range(sx, sx + 36):
+            cv.set(x, 30, "h3"); cv.set(x, 31, "h1"); cv.set(x, 32, "h0")
+        for i, kind in enumerate(("cup", "star", "cup")):
+            trophy(cv, sx + 6 + i * 12, 30, 12 - (i % 2) * 2, kind)
+    # spotlight from above onto the podium
+    for y in range(8, 40):
+        t = (y - 8) / 32
+        half = 8 + 18 * t
+        for x in range(int(80 - half), int(80 + half) + 1):
+            d = abs(x - 80) / half
+            if d < 0.92 and dither(x, y, 0.75 - d * 0.6):
+                cv.set(x, y, "spot2" if d < 0.3 and dither(x, y, 0.5) else "spot")
+    # carpet floor with a woven border
+    for y in range(40, 56):
+        for x in range(cv.w):
+            c = "cp1"
+            if (x + y) % 6 == 0:
+                c = "cp2"
+            if y in (41, 54):
+                c = "cp2"
+            if y in (40, 55):
+                c = "cp0"
+            cv.set(x, y, c)
+    # marble podium: row 5 is in front of the opponent (board tiles)
+    for y in range(40, 48):
+        for x in range(BOARD_X0, BOARD_X1):
+            ry = y - 40
+            if ry < 2:
+                c = "mb0"                                 # see-through shadow
+            else:
+                c = ("mb3", "mb2", "mb2", "mb1", "mb2", "mb1")[ry - 2]
+                if noise(x // 2, y, 92) < 0.12:
+                    c = "mb1"                             # veins
+                if x in (BOARD_X0, BOARD_X1 - 1):
+                    c = "mb1"
+            cv.set(x, y, c)
+    for y in range(48, 56):                               # podium front below
+        for x in range(BOARD_X0 + 2, BOARD_X1 - 2):
+            c = "mb2" if (x - BOARD_X0) % 16 < 14 else "mb1"
+            if y == 48:
+                c = "mb1"
+            cv.set(x, y, c)
+    for y in range(56, cv.h):
+        for x in range(cv.w):
+            cv.set(x, y, "h0")
+    cv.rect(0, 0, cv.w, 8, "h0")
+    return cv
+
+
+def scene_chalk(glyph_rows):
+    cv = Canvas(fill="cb0")
+    # wooden frame along the top
+    for y in range(0, 4):
+        for x in range(cv.w):
+            cv.set(x, y, ("w1", "w3", "w2", "w0")[y])
+    # board with smudges
+    for y in range(4, cv.h):
+        for x in range(cv.w):
+            cv.set(x, y, "cb1" if noise(x // 3, y // 2, 93) < 0.18 else "cb0")
+    # chalk diagram: a little table in perspective with a bank shot
+    def chalk_line(x0, y0, x1, y1, c="chk", dash=0):
+        n = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
+        for k in range(n + 1):
+            if dash and (k // dash) % 2:
+                continue
+            t = k / n
+            cv.set(round(x0 + (x1 - x0) * t), round(y0 + (y1 - y0) * t), c)
+    chalk_line(62, 10, 98, 10)                            # far end
+    chalk_line(62, 10, 36, 50)                            # rails
+    chalk_line(98, 10, 124, 50)
+    chalk_line(56, 30, 104, 30, "chd", 2)                 # centre line
+    chalk_line(70, 44, 90, 44)                            # paddle
+    chalk_line(70, 45, 90, 45)
+    for a in range(0, 360, 30):                           # puck
+        cv.set(round(84 + 2.5 * math.cos(math.radians(a))), round(38 + 1.6 * math.sin(math.radians(a))), "chk")
+    chalk_line(84, 36, 110, 28, "chd", 2)                 # bank shot
+    chalk_line(110, 28, 72, 12, "chd", 2)
+    chalk_line(72, 12, 75, 12); chalk_line(72, 12, 74, 15)  # arrow head
+    # labels, written in chalk
+    def label(text, x, y):
+        for i, ch in enumerate(text):
+            for ry, row in enumerate(glyph_rows(ch)):
+                for rx, bit in enumerate(row):
+                    if bit:
+                        cv.set(x + i * 6 + rx, y + ry, "chd")
+    label("RAIL", 118, 20)
+    label("PUCK", 8, 34)
+    chalk_line(32, 37, 80, 38, "chd", 1)
+    label("PADDLE", 98, 42)
+    cv.rect(0, 0, cv.w, 0, "w0")
     return cv
 
 
@@ -1766,10 +1997,12 @@ TERMS = [
     "LEVEL: EACH RIVAL IS TOUGHER.",
 ]
 # (title, stage shown at the top, opponent standing in it or None, text lines)
-GLOSSARY = [(FULL_NAMES[i], i, i, BIOS[i]) for i in range(7)] + [
-    ("PUCK TERMS", 2, None, TERMS[0:3]),
-    ("PUCK TERMS", 4, None, TERMS[3:6]),
-    ("PUCK TERMS", 6, None, TERMS[6:9]),
+HALL_SCREEN = 9          # StageTable entries after the stages, title and how-to
+CHALK_SCREEN = 10
+GLOSSARY = [(FULL_NAMES[i], HALL_SCREEN, i, BIOS[i]) for i in range(7)] + [
+    ("PUCK TERMS", CHALK_SCREEN, None, TERMS[0:3]),
+    ("PUCK TERMS", CHALK_SCREEN, None, TERMS[3:6]),
+    ("PUCK TERMS", CHALK_SCREEN, None, TERMS[6:9]),
 ]
 QUOTES = [
     "SLOW AND STEADY... ZZZ... OH! MY SERVE?",
